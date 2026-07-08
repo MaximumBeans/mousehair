@@ -106,7 +106,11 @@ class MousehairOverlay(QtWidgets.QWidget):
             'fade_enabled': False,
             'fade_out_delay': 500,
             'fade_in_delay': 0,
-            'fade_duration': 300
+            'fade_duration': 300,
+            'animate_enabled': False,
+            'animate_speed': 180,
+            'animate_spacing': 32,
+            'animate_segment_length': 14
         }
         self.start_with_system = defaults['start_with_system']
         self.alpha = defaults['alpha']
@@ -119,6 +123,13 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.fade_out_delay = defaults['fade_out_delay']
         self.fade_in_delay = defaults['fade_in_delay']
         self.fade_duration = defaults['fade_duration']
+        self.animate_enabled = defaults['animate_enabled']
+        self.animate_speed = defaults['animate_speed']
+        self.animate_spacing = defaults['animate_spacing']
+        self.animate_segment_length = defaults['animate_segment_length']
+        self.animation_phase = 0.0
+        self.animation_clock = QtCore.QElapsedTimer()
+        self.animation_clock.start()
         self.current_alpha = self.alpha
         self.hotkey_key = defaults['hotkey_key']
         self.hotkey_modifiers = defaults['hotkey_modifiers']
@@ -146,6 +157,10 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.fade_out_delay = int(data.get('fade_out_delay', self.fade_out_delay))
             self.fade_in_delay = int(data.get('fade_in_delay', self.fade_in_delay))
             self.fade_duration = int(data.get('fade_duration', self.fade_duration))
+            self.animate_enabled = bool(data.get('animate_enabled', self.animate_enabled))
+            self.animate_speed = int(data.get('animate_speed', self.animate_speed))
+            self.animate_spacing = int(data.get('animate_spacing', self.animate_spacing))
+            self.animate_segment_length = int(data.get('animate_segment_length', self.animate_segment_length))
             self.hotkey_key = str(data.get('hotkey_key', self.hotkey_key))
             self.hotkey_modifiers = list(data.get('hotkey_modifiers', self.hotkey_modifiers))
         except:
@@ -169,6 +184,10 @@ class MousehairOverlay(QtWidgets.QWidget):
                 'fade_out_delay': self.fade_out_delay,
                 'fade_in_delay': self.fade_in_delay,
                 'fade_duration': self.fade_duration,
+                'animate_enabled': self.animate_enabled,
+                'animate_speed': self.animate_speed,
+                'animate_spacing': self.animate_spacing,
+                'animate_segment_length': self.animate_segment_length,
                 'hotkey_key': self.hotkey_key,
                 'hotkey_modifiers': self.hotkey_modifiers
             }, f)
@@ -233,6 +252,24 @@ class MousehairOverlay(QtWidgets.QWidget):
         fade_duration_spin.setRange(0, 5000)
         fade_duration_spin.setValue(self.fade_duration)
 
+        animate_chk = QtWidgets.QCheckBox("Enable crawling line animation")
+        animate_chk.setChecked(self.animate_enabled)
+
+        animate_speed_spin = QtWidgets.QSpinBox()
+        animate_speed_spin.setRange(10, 1000)
+        animate_speed_spin.setValue(self.animate_speed)
+        animate_speed_spin.setSuffix(" px/s")
+
+        animate_spacing_spin = QtWidgets.QSpinBox()
+        animate_spacing_spin.setRange(8, 200)
+        animate_spacing_spin.setValue(self.animate_spacing)
+        animate_spacing_spin.setSuffix(" px")
+
+        animate_segment_spin = QtWidgets.QSpinBox()
+        animate_segment_spin.setRange(2, 100)
+        animate_segment_spin.setValue(self.animate_segment_length)
+        animate_segment_spin.setSuffix(" px")
+
         layout.addRow(start_with_system_chk)
         layout.addRow("Alpha:", alpha_spin)
         layout.addRow("Gap:", gap_spin)
@@ -244,6 +281,10 @@ class MousehairOverlay(QtWidgets.QWidget):
         layout.addRow("Fade out delay:", fade_out_spin)
         layout.addRow("Fade in delay:", fade_in_spin)
         layout.addRow("Fade duration:", fade_duration_spin)
+        layout.addRow(animate_chk)
+        layout.addRow("Animation speed:", animate_speed_spin)
+        layout.addRow("Animation spacing:", animate_spacing_spin)
+        layout.addRow("Animation segment length:", animate_segment_spin)
 
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         layout.addRow(buttons)
@@ -258,6 +299,10 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.fade_out_delay = fade_out_spin.value()
             self.fade_in_delay = fade_in_spin.value()
             self.fade_duration = fade_duration_spin.value()
+            self.animate_enabled = animate_chk.isChecked()
+            self.animate_speed = animate_speed_spin.value()
+            self.animate_spacing = animate_spacing_spin.value()
+            self.animate_segment_length = animate_segment_spin.value()
             self.save_settings()
             dialog.accept()
 
@@ -281,30 +326,70 @@ class MousehairOverlay(QtWidgets.QWidget):
         else:
             self.current_alpha = self.alpha
 
+    def draw_static_lines(self, painter, mx, my, pen):
+        painter.setPen(pen)
+        painter.drawLine(0, my, max(0, mx - self.gap), my)
+        painter.drawLine(mx + self.gap, my, self.width(), my)
+        painter.drawLine(mx, 0, mx, max(0, my - self.gap))
+        painter.drawLine(mx, my + self.gap, mx, self.height())
+
+    def draw_animated_segment_line(self, painter, start_x, start_y, end_x, end_y, toward_mouse_sign):
+        dx = end_x - start_x
+        dy = end_y - start_y
+        length = int((dx * dx + dy * dy) ** 0.5)
+        if length <= 0:
+            return
+
+        unit_x = dx / length
+        unit_y = dy / length
+        spacing = max(1, self.animate_spacing)
+        segment_length = max(1, min(self.animate_segment_length, spacing))
+        phase = self.animation_phase % spacing
+
+        pos = -phase
+        while pos < length:
+            seg_start = max(0, pos)
+            seg_end = min(length, pos + segment_length)
+            if seg_end > 0 and seg_start < length:
+                x1 = start_x + unit_x * seg_start
+                y1 = start_y + unit_y * seg_start
+                x2 = start_x + unit_x * seg_end
+                y2 = start_y + unit_y * seg_end
+                painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+            pos += spacing
+
+    def draw_animated_lines(self, painter, mx, my, pen):
+        painter.setPen(pen)
+        self.draw_animated_segment_line(painter, 0, my, max(0, mx - self.gap), my, 1)
+        self.draw_animated_segment_line(painter, self.width(), my, min(self.width(), mx + self.gap), my, 1)
+        self.draw_animated_segment_line(painter, mx, 0, mx, max(0, my - self.gap), 1)
+        self.draw_animated_segment_line(painter, mx, self.height(), mx, min(self.height(), my + self.gap), 1)
+
     def paintEvent(self, event):
+        if self.animate_enabled:
+            elapsed = self.animation_clock.restart()
+            self.animation_phase += (elapsed / 1000.0) * self.animate_speed
+
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         mx, my = QtGui.QCursor.pos().x(), QtGui.QCursor.pos().y()
 
         outer_color = QtGui.QColor(self.outer_color)
         outer_color.setAlphaF(self.current_alpha)
-        pen = QtGui.QPen(outer_color)
-        pen.setWidth(self.outer_thickness)
-        painter.setPen(pen)
-        painter.drawLine(0, my, max(0, mx - self.gap), my)
-        painter.drawLine(mx + self.gap, my, self.width(), my)
-        painter.drawLine(mx, 0, mx, max(0, my - self.gap))
-        painter.drawLine(mx, my + self.gap, mx, self.height())
+        outer_pen = QtGui.QPen(outer_color)
+        outer_pen.setWidth(self.outer_thickness)
 
         inner_color = QtGui.QColor(self.inner_color)
         inner_color.setAlphaF(self.current_alpha)
-        pen.setColor(inner_color)
-        pen.setWidth(self.inner_thickness)
-        painter.setPen(pen)
-        painter.drawLine(0, my, max(0, mx - self.gap), my)
-        painter.drawLine(mx + self.gap, my, self.width(), my)
-        painter.drawLine(mx, 0, mx, max(0, my - self.gap))
-        painter.drawLine(mx, my + self.gap, mx, self.height())
+        inner_pen = QtGui.QPen(inner_color)
+        inner_pen.setWidth(self.inner_thickness)
+
+        if self.animate_enabled:
+            self.draw_animated_lines(painter, mx, my, outer_pen)
+            self.draw_animated_lines(painter, mx, my, inner_pen)
+        else:
+            self.draw_static_lines(painter, mx, my, outer_pen)
+            self.draw_static_lines(painter, mx, my, inner_pen)
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
