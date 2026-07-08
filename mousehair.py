@@ -346,7 +346,7 @@ class MousehairOverlay(QtWidgets.QWidget):
         segment_length = max(1, min(self.animate_segment_length, spacing))
         phase = self.animation_phase % spacing
 
-        pos = -phase
+        pos = phase - spacing
         while pos < length:
             seg_start = max(0, pos)
             seg_end = min(length, pos + segment_length)
