@@ -108,6 +108,7 @@ class MousehairOverlay(QtWidgets.QWidget):
             'fade_in_delay': 0,
             'fade_duration': 300,
             'animate_enabled': False,
+            'animation_style': 'sliding',
             'animate_speed': 180,
             'animate_spacing': 32,
             'animate_segment_length': 14
@@ -124,6 +125,7 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.fade_in_delay = defaults['fade_in_delay']
         self.fade_duration = defaults['fade_duration']
         self.animate_enabled = defaults['animate_enabled']
+        self.animation_style = defaults['animation_style']
         self.animate_speed = defaults['animate_speed']
         self.animate_spacing = defaults['animate_spacing']
         self.animate_segment_length = defaults['animate_segment_length']
@@ -158,6 +160,7 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.fade_in_delay = int(data.get('fade_in_delay', self.fade_in_delay))
             self.fade_duration = int(data.get('fade_duration', self.fade_duration))
             self.animate_enabled = bool(data.get('animate_enabled', self.animate_enabled))
+            self.animation_style = str(data.get('animation_style', self.animation_style))
             self.animate_speed = int(data.get('animate_speed', self.animate_speed))
             self.animate_spacing = int(data.get('animate_spacing', self.animate_spacing))
             self.animate_segment_length = int(data.get('animate_segment_length', self.animate_segment_length))
@@ -185,6 +188,7 @@ class MousehairOverlay(QtWidgets.QWidget):
                 'fade_in_delay': self.fade_in_delay,
                 'fade_duration': self.fade_duration,
                 'animate_enabled': self.animate_enabled,
+                'animation_style': self.animation_style,
                 'animate_speed': self.animate_speed,
                 'animate_spacing': self.animate_spacing,
                 'animate_segment_length': self.animate_segment_length,
@@ -254,6 +258,12 @@ class MousehairOverlay(QtWidgets.QWidget):
 
         animate_chk = QtWidgets.QCheckBox("Enable crawling line animation")
         animate_chk.setChecked(self.animate_enabled)
+        animation_style_combo = QtWidgets.QComboBox()
+        animation_style_combo.addItem("Sliding inward", "sliding")
+
+        animation_style_index = animation_style_combo.findData(self.animation_style)
+        if animation_style_index >= 0:
+            animation_style_combo.setCurrentIndex(animation_style_index)
 
         animate_speed_spin = QtWidgets.QSpinBox()
         animate_speed_spin.setRange(10, 1000)
@@ -282,6 +292,7 @@ class MousehairOverlay(QtWidgets.QWidget):
         layout.addRow("Fade in delay:", fade_in_spin)
         layout.addRow("Fade duration:", fade_duration_spin)
         layout.addRow(animate_chk)
+        layout.addRow("Animation style:", animation_style_combo)
         layout.addRow("Animation speed:", animate_speed_spin)
         layout.addRow("Animation spacing:", animate_spacing_spin)
         layout.addRow("Animation segment length:", animate_segment_spin)
@@ -300,6 +311,7 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.fade_in_delay = fade_in_spin.value()
             self.fade_duration = fade_duration_spin.value()
             self.animate_enabled = animate_chk.isChecked()
+            self.animation_style = animation_style_combo.currentData()
             self.animate_speed = animate_speed_spin.value()
             self.animate_spacing = animate_spacing_spin.value()
             self.animate_segment_length = animate_segment_spin.value()
@@ -384,13 +396,12 @@ class MousehairOverlay(QtWidgets.QWidget):
         inner_pen = QtGui.QPen(inner_color)
         inner_pen.setWidth(self.inner_thickness)
 
-        if self.animate_enabled:
+        if self.animate_enabled and self.animation_style == "sliding":
             self.draw_animated_lines(painter, mx, my, outer_pen)
             self.draw_animated_lines(painter, mx, my, inner_pen)
         else:
             self.draw_static_lines(painter, mx, my, outer_pen)
             self.draw_static_lines(painter, mx, my, inner_pen)
-
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     overlay = MousehairOverlay()
