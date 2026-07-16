@@ -111,7 +111,11 @@ class MousehairOverlay(QtWidgets.QWidget):
             'animation_style': 'sliding',
             'animate_speed': 180,
             'animate_spacing': 32,
-            'animate_segment_length': 14
+            'animate_segment_length': 14,
+            'arrow_first_offset': 20,
+            'arrow_spacing': 40,
+            'arrow_length': 14,
+            'arrow_width': 12
         }
         self.start_with_system = defaults['start_with_system']
         self.alpha = defaults['alpha']
@@ -129,6 +133,10 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.animate_speed = defaults['animate_speed']
         self.animate_spacing = defaults['animate_spacing']
         self.animate_segment_length = defaults['animate_segment_length']
+        self.arrow_first_offset = defaults['arrow_first_offset']
+        self.arrow_spacing = defaults['arrow_spacing']
+        self.arrow_length = defaults['arrow_length']
+        self.arrow_width = defaults['arrow_width']
         self.animation_phase = 0.0
         self.animation_clock = QtCore.QElapsedTimer()
         self.animation_clock.start()
@@ -164,6 +172,10 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.animate_speed = int(data.get('animate_speed', self.animate_speed))
             self.animate_spacing = int(data.get('animate_spacing', self.animate_spacing))
             self.animate_segment_length = int(data.get('animate_segment_length', self.animate_segment_length))
+            self.arrow_first_offset = int(data.get('arrow_first_offset', self.arrow_first_offset))
+            self.arrow_spacing = int(data.get('arrow_spacing', self.arrow_spacing))
+            self.arrow_length = int(data.get('arrow_length', self.arrow_length))
+            self.arrow_width = int(data.get('arrow_width', self.arrow_width))
             self.hotkey_key = str(data.get('hotkey_key', self.hotkey_key))
             self.hotkey_modifiers = list(data.get('hotkey_modifiers', self.hotkey_modifiers))
         except:
@@ -192,6 +204,10 @@ class MousehairOverlay(QtWidgets.QWidget):
                 'animate_speed': self.animate_speed,
                 'animate_spacing': self.animate_spacing,
                 'animate_segment_length': self.animate_segment_length,
+                'arrow_first_offset': self.arrow_first_offset,
+                'arrow_spacing': self.arrow_spacing,
+                'arrow_length': self.arrow_length,
+                'arrow_width': self.arrow_width,
                 'hotkey_key': self.hotkey_key,
                 'hotkey_modifiers': self.hotkey_modifiers
             }, f)
@@ -298,6 +314,26 @@ class MousehairOverlay(QtWidgets.QWidget):
         animate_segment_spin.setValue(self.animate_segment_length)
         animate_segment_spin.setSuffix(" px")
 
+        arrow_first_spin = QtWidgets.QSpinBox()
+        arrow_first_spin.setRange(0, 500)
+        arrow_first_spin.setValue(self.arrow_first_offset)
+        arrow_first_spin.setSuffix(" px")
+
+        arrow_spacing_spin = QtWidgets.QSpinBox()
+        arrow_spacing_spin.setRange(1, 500)
+        arrow_spacing_spin.setValue(self.arrow_spacing)
+        arrow_spacing_spin.setSuffix(" px")
+
+        arrow_length_spin = QtWidgets.QSpinBox()
+        arrow_length_spin.setRange(2, 200)
+        arrow_length_spin.setValue(self.arrow_length)
+        arrow_length_spin.setSuffix(" px")
+
+        arrow_width_spin = QtWidgets.QSpinBox()
+        arrow_width_spin.setRange(2, 200)
+        arrow_width_spin.setValue(self.arrow_width)
+        arrow_width_spin.setSuffix(" px")
+
         layout.addRow(start_with_system_chk)
         layout.addRow("Alpha:", alpha_spin)
         layout.addRow("Gap:", gap_spin)
@@ -314,6 +350,32 @@ class MousehairOverlay(QtWidgets.QWidget):
         layout.addRow("Animation speed:", animate_speed_spin)
         layout.addRow("Animation spacing:", animate_spacing_spin)
         layout.addRow("Animation segment length:", animate_segment_spin)
+        layout.addRow("First arrow at:", arrow_first_spin)
+        layout.addRow("Arrow spacing:", arrow_spacing_spin)
+        layout.addRow("Arrow length:", arrow_length_spin)
+        layout.addRow("Arrow width:", arrow_width_spin)
+
+
+        def update_effect_controls():
+            arrows_selected = animation_style_combo.currentData() == "arrows"
+            animate_speed_spin.setVisible(not arrows_selected)
+            animate_spacing_spin.setVisible(not arrows_selected)
+            animate_segment_spin.setVisible(not arrows_selected)
+            layout.labelForField(animate_speed_spin).setVisible(not arrows_selected)
+            layout.labelForField(animate_spacing_spin).setVisible(not arrows_selected)
+            layout.labelForField(animate_segment_spin).setVisible(not arrows_selected)
+
+            arrow_first_spin.setVisible(arrows_selected)
+            arrow_spacing_spin.setVisible(arrows_selected)
+            arrow_length_spin.setVisible(arrows_selected)
+            arrow_width_spin.setVisible(arrows_selected)
+            layout.labelForField(arrow_first_spin).setVisible(arrows_selected)
+            layout.labelForField(arrow_spacing_spin).setVisible(arrows_selected)
+            layout.labelForField(arrow_length_spin).setVisible(arrows_selected)
+            layout.labelForField(arrow_width_spin).setVisible(arrows_selected)
+
+        animation_style_combo.currentIndexChanged.connect(update_effect_controls)
+        update_effect_controls()
 
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok |
@@ -340,6 +402,10 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.animate_speed = animate_speed_spin.value()
             self.animate_spacing = animate_spacing_spin.value()
             self.animate_segment_length = animate_segment_spin.value()
+            self.arrow_first_offset = arrow_first_spin.value()
+            self.arrow_spacing = arrow_spacing_spin.value()
+            self.arrow_length = arrow_length_spin.value()
+            self.arrow_width = arrow_width_spin.value()
             self.save_settings()
             self.update()
 
@@ -409,8 +475,8 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.draw_animated_segment_line(painter, mx, 0, mx, max(0, my - self.gap), 1)
         self.draw_animated_segment_line(painter, mx, self.height(), mx, min(self.height(), my + self.gap), 1)
 
-    def draw_arrow_line(self, painter, start_x, start_y, end_x, end_y, pen):
-        """Draw a solid guide line with fixed filled arrowheads pointing inward."""
+    def draw_arrow_line(self, painter, start_x, start_y, end_x, end_y):
+        """Draw one solid reticule arm with cursor-anchored outlined arrows."""
         dx = end_x - start_x
         dy = end_y - start_y
         length = (dx * dx + dy * dy) ** 0.5
@@ -422,55 +488,47 @@ class MousehairOverlay(QtWidgets.QWidget):
         perpendicular_x = -unit_y
         perpendicular_y = unit_x
 
-        spacing = max(8.0, float(self.animate_spacing))
+        outer_color = QtGui.QColor(self.outer_color)
+        outer_color.setAlphaF(self.current_alpha)
+        inner_color = QtGui.QColor(self.inner_color)
+        inner_color.setAlphaF(self.current_alpha)
 
-        # Scale the inner-colour arrowhead down in the same proportion as the
-        # inner line. Drawing the outer pass first therefore leaves a visible
-        # border around each filled inner arrowhead.
-        outer_width = max(1.0, float(self.outer_thickness))
-        size_scale = max(0.25, min(1.0, pen.widthF() / outer_width))
-        base_arrow_length = max(
-            6.0,
-            min(float(self.animate_segment_length), spacing * 0.65)
-        )
-        arrow_length = base_arrow_length * size_scale
-        arrow_half_width = max(3.0, base_arrow_length * 0.55) * size_scale
+        outer_pen = QtGui.QPen(outer_color)
+        outer_pen.setWidth(self.outer_thickness)
+        outer_pen.setJoinStyle(QtCore.Qt.MiterJoin)
+
+        inner_pen = QtGui.QPen(inner_color)
+        inner_pen.setWidth(self.inner_thickness)
 
         painter.save()
 
-        # Clip each arm independently. This allows arrowheads to enter at the
-        # screen edge and disappear into the centre gap a few pixels at a time,
-        # instead of popping in and out as complete shapes.
-        clip_margin = max(
-            float(self.outer_thickness),
-            base_arrow_length * 0.65
-        )
-        clip_left = min(start_x, end_x) - clip_margin
-        clip_top = min(start_y, end_y) - clip_margin
-        clip_width = abs(dx) + (clip_margin * 2.0)
-        clip_height = abs(dy) + (clip_margin * 2.0)
-        painter.setClipRect(
-            QtCore.QRectF(clip_left, clip_top, clip_width, clip_height),
-            QtCore.Qt.IntersectClip
-        )
-
-        # The reticule arm itself remains a continuous solid line.
-        painter.setPen(pen)
+        # Draw the dual-colour solid line first.
+        painter.setPen(outer_pen)
         painter.setBrush(QtCore.Qt.NoBrush)
         painter.drawLine(
             QtCore.QPointF(start_x, start_y),
             QtCore.QPointF(end_x, end_y)
         )
+        painter.setPen(inner_pen)
+        painter.drawLine(
+            QtCore.QPointF(start_x, start_y),
+            QtCore.QPointF(end_x, end_y)
+        )
 
-        # Anchor the arrow pattern to the cursor-side end of the arm. The
-        # arrowheads remain static relative to the cursor and centre gap, while
-        # the screen edge simply clips whichever outer arrows no longer fit.
-        position = length - (spacing / 2.0)
+        arrow_length = max(2.0, float(self.arrow_length))
+        arrow_half_width = max(1.0, float(self.arrow_width) / 2.0)
+        spacing = max(1.0, float(self.arrow_spacing))
+        first_offset = max(0.0, float(self.arrow_first_offset))
 
-        painter.setPen(QtCore.Qt.NoPen)
-        painter.setBrush(QtGui.QBrush(pen.color()))
+        # Measure every arrow from the cursor-side line start. This keeps the
+        # complete arrow pattern attached to the pointer and centre gap.
+        distance_from_cursor = first_offset
 
-        while position > 0:
+        painter.setPen(outer_pen)
+        painter.setBrush(QtGui.QBrush(inner_color))
+
+        while distance_from_cursor < length:
+            position = length - distance_from_cursor
             tip_x = start_x + unit_x * position
             tip_y = start_y + unit_y * position
 
@@ -489,23 +547,23 @@ class MousehairOverlay(QtWidgets.QWidget):
                 )
             ])
             painter.drawPolygon(triangle)
-            position -= spacing
+            distance_from_cursor += spacing
 
         painter.restore()
 
-    def draw_arrow_lines(self, painter, mx, my, pen):
-        """Draw solid crosshair arms with fixed arrows pointing at the mouse."""
+    def draw_arrow_lines(self, painter, mx, my):
+        """Draw all four solid arrow reticule arms."""
         self.draw_arrow_line(
-            painter, 0, my, max(0, mx - self.gap), my, pen
+            painter, 0, my, max(0, mx - self.gap), my
         )
         self.draw_arrow_line(
-            painter, self.width(), my, min(self.width(), mx + self.gap), my, pen
+            painter, self.width(), my, min(self.width(), mx + self.gap), my
         )
         self.draw_arrow_line(
-            painter, mx, 0, mx, max(0, my - self.gap), pen
+            painter, mx, 0, mx, max(0, my - self.gap)
         )
         self.draw_arrow_line(
-            painter, mx, self.height(), mx, min(self.height(), my + self.gap), pen
+            painter, mx, self.height(), mx, min(self.height(), my + self.gap)
         )
 
     def draw_crosshair(self, painter, mx, my, outer_pen, inner_pen):
@@ -526,8 +584,7 @@ class MousehairOverlay(QtWidgets.QWidget):
             return
 
         if self.animation_style == "arrows":
-            self.draw_arrow_lines(painter, mx, my, outer_pen)
-            self.draw_arrow_lines(painter, mx, my, inner_pen)
+            self.draw_arrow_lines(painter, mx, my)
             return
 
         # Fall back to the ordinary static crosshair if a configuration file
