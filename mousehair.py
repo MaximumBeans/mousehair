@@ -377,6 +377,28 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.draw_animated_segment_line(painter, mx, 0, mx, max(0, my - self.gap), 1)
         self.draw_animated_segment_line(painter, mx, self.height(), mx, min(self.height(), my + self.gap), 1)
 
+    def draw_crosshair(self, painter, mx, my, outer_pen, inner_pen):
+        """Draw the currently selected crosshair style.
+
+        Keeping the style-selection logic in one method prevents paintEvent()
+        from becoming a long chain of effect-specific conditions as more
+        rendering styles are added.
+        """
+        if not self.animate_enabled:
+            self.draw_static_lines(painter, mx, my, outer_pen)
+            self.draw_static_lines(painter, mx, my, inner_pen)
+            return
+
+        if self.animation_style == "sliding":
+            self.draw_animated_lines(painter, mx, my, outer_pen)
+            self.draw_animated_lines(painter, mx, my, inner_pen)
+            return
+
+        # Fall back to the ordinary static crosshair if a configuration file
+        # contains an unknown or no-longer-supported animation style.
+        self.draw_static_lines(painter, mx, my, outer_pen)
+        self.draw_static_lines(painter, mx, my, inner_pen)
+
     def paintEvent(self, event):
         if self.animate_enabled:
             elapsed = self.animation_clock.restart()
@@ -396,12 +418,8 @@ class MousehairOverlay(QtWidgets.QWidget):
         inner_pen = QtGui.QPen(inner_color)
         inner_pen.setWidth(self.inner_thickness)
 
-        if self.animate_enabled and self.animation_style == "sliding":
-            self.draw_animated_lines(painter, mx, my, outer_pen)
-            self.draw_animated_lines(painter, mx, my, inner_pen)
-        else:
-            self.draw_static_lines(painter, mx, my, outer_pen)
-            self.draw_static_lines(painter, mx, my, inner_pen)
+        self.draw_crosshair(painter, mx, my, outer_pen, inner_pen)
+
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     overlay = MousehairOverlay()
