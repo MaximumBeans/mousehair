@@ -500,6 +500,16 @@ class MousehairOverlay(QtWidgets.QWidget):
         inner_pen = QtGui.QPen(inner_color)
         inner_pen.setWidth(self.inner_thickness)
 
+        # Match the arrow outline to the visible outer border around the
+        # central line, rather than using the full outer-line thickness.
+        arrow_outline_width = max(
+            1.0,
+            (float(self.outer_thickness) - float(self.inner_thickness)) / 2.0
+        )
+        arrow_outline_pen = QtGui.QPen(outer_color)
+        arrow_outline_pen.setWidthF(arrow_outline_width)
+        arrow_outline_pen.setJoinStyle(QtCore.Qt.MiterJoin)
+
         painter.save()
 
         # Draw the dual-colour solid line first.
@@ -524,7 +534,7 @@ class MousehairOverlay(QtWidgets.QWidget):
         # complete arrow pattern attached to the pointer and centre gap.
         distance_from_cursor = first_offset
 
-        painter.setPen(outer_pen)
+        painter.setPen(arrow_outline_pen)
         painter.setBrush(QtGui.QBrush(inner_color))
 
         while distance_from_cursor < length:
