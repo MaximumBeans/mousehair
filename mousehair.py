@@ -222,22 +222,39 @@ class MousehairOverlay(QtWidgets.QWidget):
         inner_thick_spin.setRange(1, 20)
         inner_thick_spin.setValue(self.inner_thickness)
 
+        pending_outer_color = self.outer_color
+        pending_inner_color = self.inner_color
+
         outer_color_btn = QtWidgets.QPushButton()
-        outer_color_btn.setStyleSheet(f"background-color: {self.outer_color}")
+        outer_color_btn.setStyleSheet(f"background-color: {pending_outer_color}")
         def pick_outer():
-            color = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.outer_color), dialog, "Select Outer Color")
+            nonlocal pending_outer_color
+            color = QtWidgets.QColorDialog.getColor(
+                QtGui.QColor(pending_outer_color),
+                dialog,
+                "Select Outer Color"
+            )
             if color.isValid():
-                self.outer_color = color.name()
-                outer_color_btn.setStyleSheet(f"background-color: {self.outer_color}")
+                pending_outer_color = color.name()
+                outer_color_btn.setStyleSheet(
+                    f"background-color: {pending_outer_color}"
+                )
         outer_color_btn.clicked.connect(pick_outer)
 
         inner_color_btn = QtWidgets.QPushButton()
-        inner_color_btn.setStyleSheet(f"background-color: {self.inner_color}")
+        inner_color_btn.setStyleSheet(f"background-color: {pending_inner_color}")
         def pick_inner():
-            color = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.inner_color), dialog, "Select Inner Color")
+            nonlocal pending_inner_color
+            color = QtWidgets.QColorDialog.getColor(
+                QtGui.QColor(pending_inner_color),
+                dialog,
+                "Select Inner Color"
+            )
             if color.isValid():
-                self.inner_color = color.name()
-                inner_color_btn.setStyleSheet(f"background-color: {self.inner_color}")
+                pending_inner_color = color.name()
+                inner_color_btn.setStyleSheet(
+                    f"background-color: {pending_inner_color}"
+                )
         inner_color_btn.clicked.connect(pick_inner)
 
         fade_chk = QtWidgets.QCheckBox("Enable fade")
@@ -298,15 +315,22 @@ class MousehairOverlay(QtWidgets.QWidget):
         layout.addRow("Animation spacing:", animate_spacing_spin)
         layout.addRow("Animation segment length:", animate_segment_spin)
 
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok |
+            QtWidgets.QDialogButtonBox.Apply |
+            QtWidgets.QDialogButtonBox.Cancel
+        )
         layout.addRow(buttons)
 
-        def apply():
+        def apply_settings():
             self.start_with_system = start_with_system_chk.isChecked()
             self.alpha = alpha_spin.value()
+            self.current_alpha = self.alpha
             self.gap = gap_spin.value()
             self.outer_thickness = outer_thick_spin.value()
             self.inner_thickness = inner_thick_spin.value()
+            self.outer_color = pending_outer_color
+            self.inner_color = pending_inner_color
             self.fade_enabled = fade_chk.isChecked()
             self.fade_out_delay = fade_out_spin.value()
             self.fade_in_delay = fade_in_spin.value()
@@ -317,9 +341,16 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.animate_spacing = animate_spacing_spin.value()
             self.animate_segment_length = animate_segment_spin.value()
             self.save_settings()
+            self.update()
+
+        def accept_settings():
+            apply_settings()
             dialog.accept()
 
-        buttons.accepted.connect(apply)
+        buttons.accepted.connect(accept_settings)
+        buttons.button(
+            QtWidgets.QDialogButtonBox.Apply
+        ).clicked.connect(apply_settings)
         buttons.rejected.connect(dialog.reject)
         dialog.exec_()
 
