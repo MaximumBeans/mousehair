@@ -260,6 +260,7 @@ class MousehairOverlay(QtWidgets.QWidget):
         animate_chk.setChecked(self.animate_enabled)
         animation_style_combo = QtWidgets.QComboBox()
         animation_style_combo.addItem("Sliding inward", "sliding")
+        animation_style_combo.addItem("Direction arrows", "arrows")
 
         animation_style_index = animation_style_combo.findData(self.animation_style)
         if animation_style_index >= 0:
@@ -377,6 +378,64 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.draw_animated_segment_line(painter, mx, 0, mx, max(0, my - self.gap), 1)
         self.draw_animated_segment_line(painter, mx, self.height(), mx, min(self.height(), my + self.gap), 1)
 
+    def draw_arrow_line(self, painter, start_x, start_y, end_x, end_y, pen):
+        """Draw evenly spaced arrowheads pointing from the screen edge inward."""
+        dx = end_x - start_x
+        dy = end_y - start_y
+        length = (dx * dx + dy * dy) ** 0.5
+        if length <= 0:
+            return
+
+        unit_x = dx / length
+        unit_y = dy / length
+        perpendicular_x = -unit_y
+        perpendicular_y = unit_x
+
+        spacing = max(8, self.animate_spacing)
+        arrow_length = max(4, min(self.animate_segment_length, spacing // 2))
+        arrow_half_width = max(3, arrow_length * 0.6)
+
+        painter.setPen(pen)
+
+        position = spacing / 2.0
+        while position < length:
+            tip_x = start_x + unit_x * position
+            tip_y = start_y + unit_y * position
+
+            base_x = tip_x - unit_x * arrow_length
+            base_y = tip_y - unit_y * arrow_length
+
+            left_x = base_x + perpendicular_x * arrow_half_width
+            left_y = base_y + perpendicular_y * arrow_half_width
+            right_x = base_x - perpendicular_x * arrow_half_width
+            right_y = base_y - perpendicular_y * arrow_half_width
+
+            painter.drawLine(
+                int(left_x), int(left_y),
+                int(tip_x), int(tip_y)
+            )
+            painter.drawLine(
+                int(right_x), int(right_y),
+                int(tip_x), int(tip_y)
+            )
+
+            position += spacing
+
+    def draw_arrow_lines(self, painter, mx, my, pen):
+        """Draw arrowheads on all four crosshair arms, pointing at the mouse."""
+        self.draw_arrow_line(
+            painter, 0, my, max(0, mx - self.gap), my, pen
+        )
+        self.draw_arrow_line(
+            painter, self.width(), my, min(self.width(), mx + self.gap), my, pen
+        )
+        self.draw_arrow_line(
+            painter, mx, 0, mx, max(0, my - self.gap), pen
+        )
+        self.draw_arrow_line(
+            painter, mx, self.height(), mx, min(self.height(), my + self.gap), pen
+        )
+
     def draw_crosshair(self, painter, mx, my, outer_pen, inner_pen):
         """Draw the currently selected crosshair style.
 
@@ -392,6 +451,11 @@ class MousehairOverlay(QtWidgets.QWidget):
         if self.animation_style == "sliding":
             self.draw_animated_lines(painter, mx, my, outer_pen)
             self.draw_animated_lines(painter, mx, my, inner_pen)
+            return
+
+        if self.animation_style == "arrows":
+            self.draw_arrow_lines(painter, mx, my, outer_pen)
+            self.draw_arrow_lines(painter, mx, my, inner_pen)
             return
 
         # Fall back to the ordinary static crosshair if a configuration file
