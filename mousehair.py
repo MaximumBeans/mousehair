@@ -431,14 +431,15 @@ class MousehairOverlay(QtWidgets.QWidget):
             QtCore.QPointF(end_x, end_y)
         )
 
-        # This style is deliberately static. Place each arrowhead at a fixed
-        # interval along the line rather than offsetting it with animation_phase.
-        position = spacing / 2.0
+        # Anchor the arrow pattern to the cursor-side end of the arm. The
+        # arrowheads remain static relative to the cursor and centre gap, while
+        # the screen edge simply clips whichever outer arrows no longer fit.
+        position = length - (spacing / 2.0)
 
         painter.setPen(QtCore.Qt.NoPen)
         painter.setBrush(QtGui.QBrush(pen.color()))
 
-        while position < length:
+        while position > 0:
             tip_x = start_x + unit_x * position
             tip_y = start_y + unit_y * position
 
@@ -457,7 +458,7 @@ class MousehairOverlay(QtWidgets.QWidget):
                 )
             ])
             painter.drawPolygon(triangle)
-            position += spacing
+            position -= spacing
 
         painter.restore()
 
