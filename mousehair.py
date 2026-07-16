@@ -379,7 +379,7 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.draw_animated_segment_line(painter, mx, self.height(), mx, min(self.height(), my + self.gap), 1)
 
     def draw_arrow_line(self, painter, start_x, start_y, end_x, end_y, pen):
-        """Draw evenly spaced arrowheads pointing from the screen edge inward."""
+        """Draw a solid guide line with fixed filled arrowheads pointing inward."""
         dx = end_x - start_x
         dy = end_y - start_y
         length = (dx * dx + dy * dy) ** 0.5
@@ -391,13 +391,53 @@ class MousehairOverlay(QtWidgets.QWidget):
         perpendicular_x = -unit_y
         perpendicular_y = unit_x
 
-        spacing = max(8, self.animate_spacing)
-        arrow_length = max(4, min(self.animate_segment_length, spacing // 2))
-        arrow_half_width = max(3, arrow_length * 0.6)
+        spacing = max(8.0, float(self.animate_spacing))
 
+        # Scale the inner-colour arrowhead down in the same proportion as the
+        # inner line. Drawing the outer pass first therefore leaves a visible
+        # border around each filled inner arrowhead.
+        outer_width = max(1.0, float(self.outer_thickness))
+        size_scale = max(0.25, min(1.0, pen.widthF() / outer_width))
+        base_arrow_length = max(
+            6.0,
+            min(float(self.animate_segment_length), spacing * 0.65)
+        )
+        arrow_length = base_arrow_length * size_scale
+        arrow_half_width = max(3.0, base_arrow_length * 0.55) * size_scale
+
+        painter.save()
+
+        # Clip each arm independently. This allows arrowheads to enter at the
+        # screen edge and disappear into the centre gap a few pixels at a time,
+        # instead of popping in and out as complete shapes.
+        clip_margin = max(
+            float(self.outer_thickness),
+            base_arrow_length * 0.65
+        )
+        clip_left = min(start_x, end_x) - clip_margin
+        clip_top = min(start_y, end_y) - clip_margin
+        clip_width = abs(dx) + (clip_margin * 2.0)
+        clip_height = abs(dy) + (clip_margin * 2.0)
+        painter.setClipRect(
+            QtCore.QRectF(clip_left, clip_top, clip_width, clip_height),
+            QtCore.Qt.IntersectClip
+        )
+
+        # The reticule arm itself remains a continuous solid line.
         painter.setPen(pen)
+        painter.setBrush(QtCore.Qt.NoBrush)
+        painter.drawLine(
+            QtCore.QPointF(start_x, start_y),
+            QtCore.QPointF(end_x, end_y)
+        )
 
+        # This style is deliberately static. Place each arrowhead at a fixed
+        # interval along the line rather than offsetting it with animation_phase.
         position = spacing / 2.0
+
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(QtGui.QBrush(pen.color()))
+
         while position < length:
             tip_x = start_x + unit_x * position
             tip_y = start_y + unit_y * position
@@ -405,24 +445,24 @@ class MousehairOverlay(QtWidgets.QWidget):
             base_x = tip_x - unit_x * arrow_length
             base_y = tip_y - unit_y * arrow_length
 
-            left_x = base_x + perpendicular_x * arrow_half_width
-            left_y = base_y + perpendicular_y * arrow_half_width
-            right_x = base_x - perpendicular_x * arrow_half_width
-            right_y = base_y - perpendicular_y * arrow_half_width
-
-            painter.drawLine(
-                int(left_x), int(left_y),
-                int(tip_x), int(tip_y)
-            )
-            painter.drawLine(
-                int(right_x), int(right_y),
-                int(tip_x), int(tip_y)
-            )
-
+            triangle = QtGui.QPolygonF([
+                QtCore.QPointF(tip_x, tip_y),
+                QtCore.QPointF(
+                    base_x + perpendicular_x * arrow_half_width,
+                    base_y + perpendicular_y * arrow_half_width
+                ),
+                QtCore.QPointF(
+                    base_x - perpendicular_x * arrow_half_width,
+                    base_y - perpendicular_y * arrow_half_width
+                )
+            ])
+            painter.drawPolygon(triangle)
             position += spacing
 
+        painter.restore()
+
     def draw_arrow_lines(self, painter, mx, my, pen):
-        """Draw arrowheads on all four crosshair arms, pointing at the mouse."""
+        """Draw solid crosshair arms with fixed arrows pointing at the mouse."""
         self.draw_arrow_line(
             painter, 0, my, max(0, mx - self.gap), my, pen
         )
