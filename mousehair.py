@@ -115,7 +115,8 @@ class MousehairOverlay(QtWidgets.QWidget):
             'arrow_first_offset': 20,
             'arrow_spacing': 40,
             'arrow_length': 14,
-            'arrow_width': 12
+            'arrow_width': 12,
+            'arrow_border_over_line': True
         }
         self.start_with_system = defaults['start_with_system']
         self.alpha = defaults['alpha']
@@ -136,6 +137,7 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.arrow_first_offset = defaults['arrow_first_offset']
         self.arrow_spacing = defaults['arrow_spacing']
         self.arrow_length = defaults['arrow_length']
+        self.arrow_border_over_line = defaults['arrow_border_over_line']
         self.arrow_width = defaults['arrow_width']
         self.animation_phase = 0.0
         self.animation_clock = QtCore.QElapsedTimer()
@@ -175,6 +177,7 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.arrow_first_offset = int(data.get('arrow_first_offset', self.arrow_first_offset))
             self.arrow_spacing = int(data.get('arrow_spacing', self.arrow_spacing))
             self.arrow_length = int(data.get('arrow_length', self.arrow_length))
+            self.arrow_border_over_line = bool(data.get('arrow_border_over_line', self.arrow_border_over_line))
             self.arrow_width = int(data.get('arrow_width', self.arrow_width))
             self.hotkey_key = str(data.get('hotkey_key', self.hotkey_key))
             self.hotkey_modifiers = list(data.get('hotkey_modifiers', self.hotkey_modifiers))
@@ -207,6 +210,7 @@ class MousehairOverlay(QtWidgets.QWidget):
                 'arrow_first_offset': self.arrow_first_offset,
                 'arrow_spacing': self.arrow_spacing,
                 'arrow_length': self.arrow_length,
+                'arrow_border_over_line': self.arrow_border_over_line,
                 'arrow_width': self.arrow_width,
                 'hotkey_key': self.hotkey_key,
                 'hotkey_modifiers': self.hotkey_modifiers
@@ -335,6 +339,11 @@ class MousehairOverlay(QtWidgets.QWidget):
         arrow_width_spin.setSuffix(" px")
 
         layout.addRow(start_with_system_chk)
+
+        arrow_border_over_line_chk = QtWidgets.QCheckBox(
+            "Draw arrow border over line"
+        )
+        arrow_border_over_line_chk.setChecked(self.arrow_border_over_line)
         layout.addRow("Alpha:", alpha_spin)
         layout.addRow("Gap:", gap_spin)
         layout.addRow("Outer thickness:", outer_thick_spin)
@@ -354,7 +363,7 @@ class MousehairOverlay(QtWidgets.QWidget):
         layout.addRow("Arrow spacing:", arrow_spacing_spin)
         layout.addRow("Arrow length:", arrow_length_spin)
         layout.addRow("Arrow width:", arrow_width_spin)
-
+        layout.addRow(arrow_border_over_line_chk)
 
         def update_effect_controls():
             arrows_selected = animation_style_combo.currentData() == "arrows"
@@ -369,6 +378,7 @@ class MousehairOverlay(QtWidgets.QWidget):
             arrow_spacing_spin.setVisible(arrows_selected)
             arrow_length_spin.setVisible(arrows_selected)
             arrow_width_spin.setVisible(arrows_selected)
+            arrow_border_over_line_chk.setVisible(arrows_selected)
             layout.labelForField(arrow_first_spin).setVisible(arrows_selected)
             layout.labelForField(arrow_spacing_spin).setVisible(arrows_selected)
             layout.labelForField(arrow_length_spin).setVisible(arrows_selected)
@@ -406,6 +416,7 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.arrow_spacing = arrow_spacing_spin.value()
             self.arrow_length = arrow_length_spin.value()
             self.arrow_width = arrow_width_spin.value()
+            self.arrow_border_over_line = arrow_border_over_line_chk.isChecked()
             self.save_settings()
             self.update()
 
@@ -558,6 +569,19 @@ class MousehairOverlay(QtWidgets.QWidget):
             ])
             painter.drawPolygon(triangle)
             distance_from_cursor += spacing
+
+
+            if not self.arrow_border_over_line:
+                # Redraw the inner-colour line through the arrowhead so its
+                # border does not divide it from the reticule arm.
+                painter.setPen(inner_pen)
+                painter.setBrush(QtCore.Qt.NoBrush)
+                painter.drawLine(
+                    QtCore.QPointF(start_x, start_y),
+                    QtCore.QPointF(end_x, end_y)
+                )
+                painter.setPen(arrow_outline_pen)
+                painter.setBrush(QtGui.QBrush(inner_color))
 
         painter.restore()
 
