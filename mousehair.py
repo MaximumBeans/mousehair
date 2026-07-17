@@ -116,7 +116,8 @@ class MousehairOverlay(QtWidgets.QWidget):
             'arrow_spacing': 40,
             'arrow_length': 14,
             'arrow_width': 12,
-            'arrow_border_over_line': True
+            'arrow_border_over_line': True,
+            'ring_enabled': False
         }
         self.start_with_system = defaults['start_with_system']
         self.alpha = defaults['alpha']
@@ -139,6 +140,7 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.arrow_length = defaults['arrow_length']
         self.arrow_border_over_line = defaults['arrow_border_over_line']
         self.arrow_width = defaults['arrow_width']
+        self.ring_enabled = defaults['ring_enabled']
         self.animation_phase = 0.0
         self.animation_clock = QtCore.QElapsedTimer()
         self.animation_clock.start()
@@ -179,6 +181,7 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.arrow_length = int(data.get('arrow_length', self.arrow_length))
             self.arrow_border_over_line = bool(data.get('arrow_border_over_line', self.arrow_border_over_line))
             self.arrow_width = int(data.get('arrow_width', self.arrow_width))
+            self.ring_enabled = bool(data.get('ring_enabled', self.ring_enabled))
             self.hotkey_key = str(data.get('hotkey_key', self.hotkey_key))
             self.hotkey_modifiers = list(data.get('hotkey_modifiers', self.hotkey_modifiers))
         except:
@@ -212,6 +215,7 @@ class MousehairOverlay(QtWidgets.QWidget):
                 'arrow_length': self.arrow_length,
                 'arrow_border_over_line': self.arrow_border_over_line,
                 'arrow_width': self.arrow_width,
+                'ring_enabled': self.ring_enabled,
                 'hotkey_key': self.hotkey_key,
                 'hotkey_modifiers': self.hotkey_modifiers
             }, f)
@@ -280,6 +284,9 @@ class MousehairOverlay(QtWidgets.QWidget):
         fade_chk = QtWidgets.QCheckBox("Enable fade")
         fade_chk.setChecked(self.fade_enabled)
         fade_chk.setVisible(True)
+
+        ring_chk = QtWidgets.QCheckBox("Enable ring reticule")
+        ring_chk.setChecked(self.ring_enabled)
 
         fade_out_spin = QtWidgets.QSpinBox()
         fade_out_spin.setRange(0, 5000)
@@ -350,6 +357,7 @@ class MousehairOverlay(QtWidgets.QWidget):
         layout.addRow("Inner thickness:", inner_thick_spin)
         layout.addRow("Outer color:", outer_color_btn)
         layout.addRow("Inner color:", inner_color_btn)
+        layout.addRow(ring_chk)
         layout.addRow(fade_chk)
         layout.addRow("Fade out delay:", fade_out_spin)
         layout.addRow("Fade in delay:", fade_in_spin)
@@ -403,6 +411,7 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.inner_thickness = inner_thick_spin.value()
             self.outer_color = pending_outer_color
             self.inner_color = pending_inner_color
+            self.ring_enabled = ring_chk.isChecked()
             self.fade_enabled = fade_chk.isChecked()
             self.fade_out_delay = fade_out_spin.value()
             self.fade_in_delay = fade_in_spin.value()
@@ -619,6 +628,29 @@ class MousehairOverlay(QtWidgets.QWidget):
             painter, mx, self.height(), mx, min(self.height(), my + self.gap)
         )
 
+    def draw_ring(self, painter, mx, my, outer_pen, inner_pen):
+        """Draw the optional two-colour ring around the mouse pointer.
+
+        The crosshair arms stop `gap` pixels from the pointer, so a circle with
+        radius `gap` follows the boundary of that empty centre area.
+        """
+        if not self.ring_enabled or self.gap <= 0:
+            return
+
+        diameter = self.gap * 2
+        ring_rect = QtCore.QRectF(
+            mx - self.gap,
+            my - self.gap,
+            diameter,
+            diameter
+        )
+
+        painter.setBrush(QtCore.Qt.NoBrush)
+        painter.setPen(outer_pen)
+        painter.drawEllipse(ring_rect)
+        painter.setPen(inner_pen)
+        painter.drawEllipse(ring_rect)
+
     def draw_crosshair(self, painter, mx, my, outer_pen, inner_pen):
         """Draw the currently selected crosshair style.
 
@@ -665,6 +697,7 @@ class MousehairOverlay(QtWidgets.QWidget):
         inner_pen.setWidth(self.inner_thickness)
 
         self.draw_crosshair(painter, mx, my, outer_pen, inner_pen)
+        self.draw_ring(painter, mx, my, outer_pen, inner_pen)
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
