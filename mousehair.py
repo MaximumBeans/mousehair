@@ -59,6 +59,16 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.fade_timer = QtCore.QTimer()
         self.fade_timer.timeout.connect(self.update_fade)
         self.fade_timer.start(16)
+
+        self.magnifier_pixmap = QtGui.QPixmap()
+        self.magnifier_capture_pending = False
+        self.magnifier_last_capture_pos = QtCore.QPoint(-100000, -100000)
+        self.magnifier_capture_timer = QtCore.QTimer()
+        self.magnifier_capture_timer.timeout.connect(
+            self.request_magnifier_capture
+        )
+        self.magnifier_capture_timer.start(50)
+
         self.last_mouse_pos = QtGui.QCursor.pos()
         self.last_move_time = QtCore.QElapsedTimer()
         self.last_move_time.start()
@@ -663,43 +673,85 @@ class MousehairOverlay(QtWidgets.QWidget):
             painter, mx, self.height(), mx, min(self.height(), my + self.gap)
         )
 
+    def request_magnifier_capture(self):
+        """Schedule a fresh desktop capture for the ring magnifier."""
+        if (
+            not self.visible
+            or not self.ring_enabled
+            or not self.magnifier_enabled
+            or self.gap <= 0
+            or self.magnification <= 1.0
+            or self.magnifier_capture_pending
+        ):
+            return
+
+        cursor_pos = QtGui.QCursor.pos()
+        if cursor_pos == self.magnifier_last_capture_pos:
+            return
+
+        self.magnifier_capture_pending = True
+        self.setWindowOpacity(0.0)
+        QtWidgets.QApplication.processEvents(
+            QtCore.QEventLoop.ExcludeUserInputEvents
+        )
+        QtCore.QTimer.singleShot(10, self.finish_magnifier_capture)
+
+    def finish_magnifier_capture(self):
+        """Capture the desktop beneath the pointer and restore Mousehair."""
+        try:
+            cursor_global = QtGui.QCursor.pos()
+            screen = QtWidgets.QApplication.screenAt(cursor_global)
+            if screen is None:
+                screen = QtWidgets.QApplication.primaryScreen()
+            if screen is None:
+                return
+
+            destination_diameter = float(self.gap * 2)
+            source_diameter = max(
+                1,
+                int(round(destination_diameter / self.magnification))
+            )
+
+            screen_origin = screen.geometry().topLeft()
+            source_x = int(round(
+                cursor_global.x()
+                - screen_origin.x()
+                - source_diameter / 2.0
+            ))
+            source_y = int(round(
+                cursor_global.y()
+                - screen_origin.y()
+                - source_diameter / 2.0
+            ))
+
+            sample = screen.grabWindow(
+                0,
+                source_x,
+                source_y,
+                source_diameter,
+                source_diameter
+            )
+
+            if not sample.isNull():
+                self.magnifier_pixmap = sample
+                self.magnifier_last_capture_pos = cursor_global
+        finally:
+            self.setWindowOpacity(1.0)
+            self.magnifier_capture_pending = False
+            self.update()
+
     def draw_magnifier(self, painter, mx, my):
-        """Draw a circular magnified desktop view inside the ring."""
+        """Draw the cached circular magnified desktop image."""
         if (
             not self.ring_enabled
             or not self.magnifier_enabled
             or self.gap <= 0
             or self.magnification <= 1.0
+            or self.magnifier_pixmap.isNull()
         ):
             return
 
-        screen = QtWidgets.QApplication.screenAt(QtGui.QCursor.pos())
-        if screen is None:
-            screen = QtWidgets.QApplication.primaryScreen()
-        if screen is None:
-            return
-
         destination_diameter = float(self.gap * 2)
-        source_diameter = max(
-            1,
-            int(round(destination_diameter / self.magnification))
-        )
-
-        cursor_global = QtGui.QCursor.pos()
-        screen_origin = screen.geometry().topLeft()
-        source_x = int(round(
-            cursor_global.x() - screen_origin.x() - source_diameter / 2.0
-        ))
-        source_y = int(round(
-            cursor_global.y() - screen_origin.y() - source_diameter / 2.0
-        ))
-
-        desktop_sample = screen.grabWindow(
-            0, source_x, source_y, source_diameter, source_diameter
-        )
-        if desktop_sample.isNull():
-            return
-
         destination = QtCore.QRectF(
             mx - self.gap,
             my - self.gap,
@@ -714,8 +766,8 @@ class MousehairOverlay(QtWidgets.QWidget):
         painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
         painter.drawPixmap(
             destination,
-            desktop_sample,
-            QtCore.QRectF(desktop_sample.rect())
+            self.magnifier_pixmap,
+            QtCore.QRectF(self.magnifier_pixmap.rect())
         )
         painter.restore()
 
