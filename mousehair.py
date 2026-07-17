@@ -117,7 +117,9 @@ class MousehairOverlay(QtWidgets.QWidget):
             'arrow_length': 14,
             'arrow_width': 12,
             'arrow_border_over_line': True,
-            'ring_enabled': False
+            'ring_enabled': False,
+            'magnifier_enabled': False,
+            'magnification': 2.0
         }
         self.start_with_system = defaults['start_with_system']
         self.alpha = defaults['alpha']
@@ -141,6 +143,8 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.arrow_border_over_line = defaults['arrow_border_over_line']
         self.arrow_width = defaults['arrow_width']
         self.ring_enabled = defaults['ring_enabled']
+        self.magnifier_enabled = defaults['magnifier_enabled']
+        self.magnification = defaults['magnification']
         self.animation_phase = 0.0
         self.animation_clock = QtCore.QElapsedTimer()
         self.animation_clock.start()
@@ -182,6 +186,8 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.arrow_border_over_line = bool(data.get('arrow_border_over_line', self.arrow_border_over_line))
             self.arrow_width = int(data.get('arrow_width', self.arrow_width))
             self.ring_enabled = bool(data.get('ring_enabled', self.ring_enabled))
+            self.magnifier_enabled = bool(data.get('magnifier_enabled', self.magnifier_enabled))
+            self.magnification = float(data.get('magnification', self.magnification))
             self.hotkey_key = str(data.get('hotkey_key', self.hotkey_key))
             self.hotkey_modifiers = list(data.get('hotkey_modifiers', self.hotkey_modifiers))
         except:
@@ -216,6 +222,8 @@ class MousehairOverlay(QtWidgets.QWidget):
                 'arrow_border_over_line': self.arrow_border_over_line,
                 'arrow_width': self.arrow_width,
                 'ring_enabled': self.ring_enabled,
+                'magnifier_enabled': self.magnifier_enabled,
+                'magnification': self.magnification,
                 'hotkey_key': self.hotkey_key,
                 'hotkey_modifiers': self.hotkey_modifiers
             }, f)
@@ -288,6 +296,16 @@ class MousehairOverlay(QtWidgets.QWidget):
         ring_chk = QtWidgets.QCheckBox("Enable ring reticule")
         ring_chk.setChecked(self.ring_enabled)
 
+        magnifier_chk = QtWidgets.QCheckBox("Enable magnification inside ring")
+        magnifier_chk.setChecked(self.magnifier_enabled)
+
+        magnification_spin = QtWidgets.QDoubleSpinBox()
+        magnification_spin.setRange(1.25, 5.0)
+        magnification_spin.setSingleStep(0.25)
+        magnification_spin.setDecimals(2)
+        magnification_spin.setValue(self.magnification)
+        magnification_spin.setSuffix("x")
+
         fade_out_spin = QtWidgets.QSpinBox()
         fade_out_spin.setRange(0, 5000)
         fade_out_spin.setValue(self.fade_out_delay)
@@ -358,6 +376,8 @@ class MousehairOverlay(QtWidgets.QWidget):
         layout.addRow("Outer color:", outer_color_btn)
         layout.addRow("Inner color:", inner_color_btn)
         layout.addRow(ring_chk)
+        layout.addRow(magnifier_chk)
+        layout.addRow("Magnification:", magnification_spin)
         layout.addRow(fade_chk)
         layout.addRow("Fade out delay:", fade_out_spin)
         layout.addRow("Fade in delay:", fade_in_spin)
@@ -395,6 +415,17 @@ class MousehairOverlay(QtWidgets.QWidget):
         animation_style_combo.currentIndexChanged.connect(update_effect_controls)
         update_effect_controls()
 
+        def update_ring_controls():
+            ring_selected = ring_chk.isChecked()
+            magnifier_chk.setEnabled(ring_selected)
+            magnification_spin.setEnabled(
+                ring_selected and magnifier_chk.isChecked()
+            )
+
+        ring_chk.toggled.connect(update_ring_controls)
+        magnifier_chk.toggled.connect(update_ring_controls)
+        update_ring_controls()
+
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok |
             QtWidgets.QDialogButtonBox.Apply |
@@ -412,6 +443,10 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.outer_color = pending_outer_color
             self.inner_color = pending_inner_color
             self.ring_enabled = ring_chk.isChecked()
+            self.magnifier_enabled = (
+                self.ring_enabled and magnifier_chk.isChecked()
+            )
+            self.magnification = magnification_spin.value()
             self.fade_enabled = fade_chk.isChecked()
             self.fade_out_delay = fade_out_spin.value()
             self.fade_in_delay = fade_in_spin.value()
@@ -628,6 +663,62 @@ class MousehairOverlay(QtWidgets.QWidget):
             painter, mx, self.height(), mx, min(self.height(), my + self.gap)
         )
 
+    def draw_magnifier(self, painter, mx, my):
+        """Draw a circular magnified desktop view inside the ring."""
+        if (
+            not self.ring_enabled
+            or not self.magnifier_enabled
+            or self.gap <= 0
+            or self.magnification <= 1.0
+        ):
+            return
+
+        screen = QtWidgets.QApplication.screenAt(QtGui.QCursor.pos())
+        if screen is None:
+            screen = QtWidgets.QApplication.primaryScreen()
+        if screen is None:
+            return
+
+        destination_diameter = float(self.gap * 2)
+        source_diameter = max(
+            1,
+            int(round(destination_diameter / self.magnification))
+        )
+
+        cursor_global = QtGui.QCursor.pos()
+        screen_origin = screen.geometry().topLeft()
+        source_x = int(round(
+            cursor_global.x() - screen_origin.x() - source_diameter / 2.0
+        ))
+        source_y = int(round(
+            cursor_global.y() - screen_origin.y() - source_diameter / 2.0
+        ))
+
+        desktop_sample = screen.grabWindow(
+            0, source_x, source_y, source_diameter, source_diameter
+        )
+        if desktop_sample.isNull():
+            return
+
+        destination = QtCore.QRectF(
+            mx - self.gap,
+            my - self.gap,
+            destination_diameter,
+            destination_diameter
+        )
+
+        painter.save()
+        clip_path = QtGui.QPainterPath()
+        clip_path.addEllipse(destination)
+        painter.setClipPath(clip_path, QtCore.Qt.IntersectClip)
+        painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
+        painter.drawPixmap(
+            destination,
+            desktop_sample,
+            QtCore.QRectF(desktop_sample.rect())
+        )
+        painter.restore()
+
     def draw_ring(self, painter, mx, my, outer_pen, inner_pen):
         """Draw the optional two-colour ring around the mouse pointer.
 
@@ -696,6 +787,7 @@ class MousehairOverlay(QtWidgets.QWidget):
         inner_pen = QtGui.QPen(inner_color)
         inner_pen.setWidth(self.inner_thickness)
 
+        self.draw_magnifier(painter, mx, my)
         self.draw_crosshair(painter, mx, my, outer_pen, inner_pen)
         self.draw_ring(painter, mx, my, outer_pen, inner_pen)
 
