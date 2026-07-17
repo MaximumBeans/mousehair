@@ -511,6 +511,12 @@ class MousehairOverlay(QtWidgets.QWidget):
         inner_pen = QtGui.QPen(inner_color)
         inner_pen.setWidth(self.inner_thickness)
 
+        # This separate pen is used only when the arrow border should not cross
+        # the line. FlatCap prevents the redrawn line from projecting past the
+        # arrow tip when the first arrow offset is zero.
+        arrow_join_pen = QtGui.QPen(inner_pen)
+        arrow_join_pen.setCapStyle(QtCore.Qt.FlatCap)
+
         # Match the arrow outline to the visible outer border around the
         # central line, rather than using the full outer-line thickness.
         arrow_outline_width = max(
@@ -570,18 +576,31 @@ class MousehairOverlay(QtWidgets.QWidget):
             painter.drawPolygon(triangle)
             distance_from_cursor += spacing
 
+        if not self.arrow_border_over_line:
+            # Redraw the centre line once after all arrowheads have been drawn.
+            #
+            # When the first arrow offset is zero, its sharp tip sits exactly
+            # at the cursor-side end of the arm. Drawing the centre line all
+            # the way to that point makes the rectangular line remain visible
+            # beyond the narrowing white triangle. End the redraw safely inside
+            # that first arrowhead instead.
+            join_end_x = end_x
+            join_end_y = end_y
 
-            if not self.arrow_border_over_line:
-                # Redraw the inner-colour line through the arrowhead so its
-                # border does not divide it from the reticule arm.
-                painter.setPen(inner_pen)
-                painter.setBrush(QtCore.Qt.NoBrush)
-                painter.drawLine(
-                    QtCore.QPointF(start_x, start_y),
-                    QtCore.QPointF(end_x, end_y)
+            if first_offset <= 0.0:
+                join_inset = max(
+                    float(self.inner_thickness),
+                    arrow_length * 0.45
                 )
-                painter.setPen(arrow_outline_pen)
-                painter.setBrush(QtGui.QBrush(inner_color))
+                join_end_x -= unit_x * join_inset
+                join_end_y -= unit_y * join_inset
+
+            painter.setPen(arrow_join_pen)
+            painter.setBrush(QtCore.Qt.NoBrush)
+            painter.drawLine(
+                QtCore.QPointF(start_x, start_y),
+                QtCore.QPointF(join_end_x, join_end_y)
+            )
 
         painter.restore()
 
