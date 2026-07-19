@@ -60,15 +60,14 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.fade_timer.timeout.connect(self.update_fade)
         self.fade_timer.start(16)
 
-        self.magnifier_pixmap = QtGui.QPixmap()
-        self.magnifier_capture_pending = False
-        self.magnifier_capture_position = QtCore.QPoint()
+        self.magnifier_display = display.Display()
+        self.magnifier_root = self.magnifier_display.screen().root
+        self.magnifier_image = QtGui.QImage()
+
         self.magnifier_capture_timer = QtCore.QTimer()
         self.magnifier_capture_timer.timeout.connect(
-            self.request_magnifier_capture
+            self.capture_x11_magnifier
         )
-        # Capture continuously at 20 FPS. A magnifier must keep reflecting
-        # changing windows even while the mouse itself remains stationary.
         self.magnifier_capture_timer.start(50)
 
         self.last_mouse_pos = QtGui.QCursor.pos()
@@ -477,9 +476,9 @@ class MousehairOverlay(QtWidgets.QWidget):
             # Settings can alter the source size and destination geometry even
             # when the pointer has not moved. Discard the old sample and force
             # an immediate refresh.
-            self.magnifier_pixmap = QtGui.QPixmap()
+            self.magnifier_image = QtGui.QImage()
             self.save_settings()
-            self.request_magnifier_capture()
+            self.capture_x11_magnifier()
             self.update()
 
         def accept_settings():
@@ -681,82 +680,74 @@ class MousehairOverlay(QtWidgets.QWidget):
             painter, mx, self.height(), mx, min(self.height(), my + self.gap)
         )
 
-    def request_magnifier_capture(self):
-        """Refresh the desktop sample used by the ring magnifier."""
+    def capture_x11_magnifier(self):
+        """Capture one magnifier source frame directly from X11."""
         if (
             not self.visible
             or not self.ring_enabled
             or not self.magnifier_enabled
             or self.gap <= 0
             or self.magnification <= 1.0
-            or self.magnifier_capture_pending
         ):
             return
 
-        self.magnifier_capture_pending = True
-        self.magnifier_capture_position = QtGui.QCursor.pos()
-
-        # Hiding the overlay removes it from Cinnamon's composited desktop.
-        # Merely setting its opacity to zero can leave the previous magnified
-        # frame in the compositor's capture, causing recursive zoom growth.
-        self.hide()
-        QtWidgets.QApplication.processEvents(
-            QtCore.QEventLoop.ExcludeUserInputEvents
+        cursor = QtGui.QCursor.pos()
+        source_size = max(
+            1,
+            int(round((self.gap * 2.0) / self.magnification))
         )
-        QtCore.QTimer.singleShot(8, self.finish_magnifier_capture)
 
-    def finish_magnifier_capture(self):
-        """Capture one stable underlay frame, then restore Mousehair."""
+        geometry = self.magnifier_root.get_geometry()
+        root_width = int(geometry.width)
+        root_height = int(geometry.height)
+        source_size = min(source_size, root_width, root_height)
+
+        source_x = int(round(cursor.x() - source_size / 2.0))
+        source_y = int(round(cursor.y() - source_size / 2.0))
+        source_x = max(0, min(source_x, root_width - source_size))
+        source_y = max(0, min(source_y, root_height - source_size))
+
         try:
-            capture_pos = QtCore.QPoint(self.magnifier_capture_position)
-            screen = QtWidgets.QApplication.screenAt(capture_pos)
-            if screen is None:
-                screen = QtWidgets.QApplication.primaryScreen()
-            if screen is None:
-                return
-
-            destination_diameter = float(self.gap * 2)
-            source_diameter = max(
-                1,
-                int(round(destination_diameter / self.magnification))
-            )
-
-            screen_origin = screen.geometry().topLeft()
-            source_x = int(round(
-                capture_pos.x()
-                - screen_origin.x()
-                - source_diameter / 2.0
-            ))
-            source_y = int(round(
-                capture_pos.y()
-                - screen_origin.y()
-                - source_diameter / 2.0
-            ))
-
-            sample = screen.grabWindow(
-                0,
+            ximage = self.magnifier_root.get_image(
                 source_x,
                 source_y,
-                source_diameter,
-                source_diameter
+                source_size,
+                source_size,
+                X.ZPixmap,
+                0xFFFFFFFF
             )
+        except Exception:
+            return
 
-            if not sample.isNull():
-                self.magnifier_pixmap = sample
-        finally:
-            if self.visible:
-                self.show()
-            self.magnifier_capture_pending = False
-            self.update()
+        if ximage is None or not ximage.data:
+            return
+
+        raw = bytearray(ximage.data)
+        pixel_count = source_size * source_size
+        if len(raw) != pixel_count * 4:
+            return
+
+        for alpha_index in range(3, len(raw), 4):
+            raw[alpha_index] = 255
+
+        image = QtGui.QImage(
+            bytes(raw),
+            source_size,
+            source_size,
+            source_size * 4,
+            QtGui.QImage.Format_RGB32
+        )
+        self.magnifier_image = image.copy()
+        self.update()
 
     def draw_magnifier(self, painter, mx, my):
-        """Draw the cached magnified image and honour reticule fading."""
+        """Draw the X11-captured image and honour reticule fading."""
         if (
             not self.ring_enabled
             or not self.magnifier_enabled
             or self.gap <= 0
             or self.magnification <= 1.0
-            or self.magnifier_pixmap.isNull()
+            or self.magnifier_image.isNull()
             or self.current_alpha <= 0.0
         ):
             return
@@ -770,9 +761,6 @@ class MousehairOverlay(QtWidgets.QWidget):
         )
 
         painter.save()
-
-        # The line colours already include current_alpha. Apply the same fade
-        # fraction to the captured desktop image.
         if self.alpha > 0.0:
             painter.setOpacity(
                 max(0.0, min(1.0, self.current_alpha / self.alpha))
@@ -784,10 +772,10 @@ class MousehairOverlay(QtWidgets.QWidget):
         clip_path.addEllipse(destination)
         painter.setClipPath(clip_path, QtCore.Qt.IntersectClip)
         painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
-        painter.drawPixmap(
+        painter.drawImage(
             destination,
-            self.magnifier_pixmap,
-            QtCore.QRectF(self.magnifier_pixmap.rect())
+            self.magnifier_image,
+            QtCore.QRectF(self.magnifier_image.rect())
         )
         painter.restore()
 
