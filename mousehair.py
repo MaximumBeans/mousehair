@@ -64,6 +64,13 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.magnifier_root = self.magnifier_display.screen().root
         self.magnifier_image = QtGui.QImage()
 
+        # Capturing the composed X11 root can include the magnifier's previous
+        # frame. Suppress only the magnified image for one compositor cycle
+        # before each capture so recursive zoom cannot feed back into itself.
+        self.magnifier_capture_pending = False
+        self.magnifier_capture_suppressed = False
+        self.magnifier_capture_position = QtCore.QPoint()
+
         self.magnifier_capture_timer = QtCore.QTimer()
         self.magnifier_capture_timer.timeout.connect(
             self.capture_x11_magnifier
@@ -681,69 +688,93 @@ class MousehairOverlay(QtWidgets.QWidget):
         )
 
     def capture_x11_magnifier(self):
-        """Capture one magnifier source frame directly from X11."""
+        """Begin a two-stage capture with the old magnified frame suppressed."""
         if (
             not self.visible
             or not self.ring_enabled
             or not self.magnifier_enabled
             or self.gap <= 0
             or self.magnification <= 1.0
+            or self.magnifier_capture_pending
         ):
             return
 
-        cursor = QtGui.QCursor.pos()
-        source_size = max(
-            1,
-            int(round((self.gap * 2.0) / self.magnification))
+        self.magnifier_capture_pending = True
+        self.magnifier_capture_suppressed = True
+        self.magnifier_capture_position = QtGui.QCursor.pos()
+
+        # Repaint immediately without the magnified image. The crosshair arms
+        # and ring may remain because the captured source rectangle lies inside
+        # the centre gap at magnifications above 1x.
+        self.repaint()
+        QtWidgets.QApplication.processEvents(
+            QtCore.QEventLoop.ExcludeUserInputEvents
         )
 
-        geometry = self.magnifier_root.get_geometry()
-        root_width = int(geometry.width)
-        root_height = int(geometry.height)
-        source_size = min(source_size, root_width, root_height)
+        # Give Cinnamon/Muffin one compositor frame to publish the clean
+        # underlay before reading the root window.
+        QtCore.QTimer.singleShot(18, self.finish_x11_magnifier_capture)
 
-        source_x = int(round(cursor.x() - source_size / 2.0))
-        source_y = int(round(cursor.y() - source_size / 2.0))
-        source_x = max(0, min(source_x, root_width - source_size))
-        source_y = max(0, min(source_y, root_height - source_size))
-
+    def finish_x11_magnifier_capture(self):
+        """Read the clean root pixels and restore magnifier rendering."""
         try:
-            ximage = self.magnifier_root.get_image(
-                source_x,
-                source_y,
-                source_size,
-                source_size,
-                X.ZPixmap,
-                0xFFFFFFFF
+            cursor = QtCore.QPoint(self.magnifier_capture_position)
+            source_size = max(
+                1,
+                int(round((self.gap * 2.0) / self.magnification))
             )
-        except Exception:
-            return
 
-        if ximage is None or not ximage.data:
-            return
+            geometry = self.magnifier_root.get_geometry()
+            root_width = int(geometry.width)
+            root_height = int(geometry.height)
+            source_size = min(source_size, root_width, root_height)
 
-        raw = bytearray(ximage.data)
-        pixel_count = source_size * source_size
-        if len(raw) != pixel_count * 4:
-            return
+            source_x = int(round(cursor.x() - source_size / 2.0))
+            source_y = int(round(cursor.y() - source_size / 2.0))
+            source_x = max(0, min(source_x, root_width - source_size))
+            source_y = max(0, min(source_y, root_height - source_size))
 
-        for alpha_index in range(3, len(raw), 4):
-            raw[alpha_index] = 255
+            try:
+                ximage = self.magnifier_root.get_image(
+                    source_x,
+                    source_y,
+                    source_size,
+                    source_size,
+                    X.ZPixmap,
+                    0xFFFFFFFF
+                )
+            except Exception:
+                return
 
-        image = QtGui.QImage(
-            bytes(raw),
-            source_size,
-            source_size,
-            source_size * 4,
-            QtGui.QImage.Format_RGB32
-        )
-        self.magnifier_image = image.copy()
-        self.update()
+            if ximage is None or not ximage.data:
+                return
+
+            raw = bytearray(ximage.data)
+            pixel_count = source_size * source_size
+            if len(raw) != pixel_count * 4:
+                return
+
+            for alpha_index in range(3, len(raw), 4):
+                raw[alpha_index] = 255
+
+            image = QtGui.QImage(
+                bytes(raw),
+                source_size,
+                source_size,
+                source_size * 4,
+                QtGui.QImage.Format_RGB32
+            )
+            self.magnifier_image = image.copy()
+        finally:
+            self.magnifier_capture_suppressed = False
+            self.magnifier_capture_pending = False
+            self.update()
 
     def draw_magnifier(self, painter, mx, my):
-        """Draw the X11-captured image and honour reticule fading."""
+        """Draw the clean X11-captured image and honour reticule fading."""
         if (
-            not self.ring_enabled
+            self.magnifier_capture_suppressed
+            or not self.ring_enabled
             or not self.magnifier_enabled
             or self.gap <= 0
             or self.magnification <= 1.0
