@@ -1,24 +1,17 @@
-# Python bytecode and caches
+# Python-generated cache files
 __pycache__/
 *.py[cod]
-*$py.class
 
-# Virtual environments
-.venv/
-venv/
-env/
+# Local guarded-updater scripts
+tools/
 
-# Editor settings
-.vscode/
-.idea/
+# Local patches and experiments
+patches/
 
-# Local configuration and temporary files
-*.log
-*.tmp
-*.swp
-*~
+# Automatic source backups
+mousehair.py.before-*
 
-# Packaging output
-build/
-dist/
-*.egg-info/
+# Local inspection and diagnostic output
+*-inspection.txt
+*-repair.txt
+git-config.txt
