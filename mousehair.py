@@ -4,7 +4,7 @@ import json
 import os
 from PyQt5 import QtWidgets, QtGui, QtCore
 from Xlib import X, XK, display
-from mousehair_app import NullCaptureProvider, RenderPipelineMixin
+from mousehair_app import CompositeCapture, RenderPipelineMixin
 
 CONFIG_PATH = os.path.expanduser('~/.config/mousehair/config.json')
 
@@ -61,7 +61,7 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         self.fade_timer.timeout.connect(self.update_fade)
         self.fade_timer.start(16)
 
-        self.capture_provider = NullCaptureProvider()
+        self.capture_provider = CompositeCapture()
 
         self.last_mouse_pos = QtGui.QCursor.pos()
         self.last_move_time = QtCore.QElapsedTimer()
