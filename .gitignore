@@ -15,3 +15,6 @@ mousehair.py.before-*
 *-inspection.txt
 *-repair.txt
 git-config.txt
+
+# Editor backup files
+*~
