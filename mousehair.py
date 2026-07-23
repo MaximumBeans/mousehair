@@ -236,7 +236,22 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Mousehair Settings")
         dialog.setMinimumWidth(480)
-        layout = QtWidgets.QFormLayout(dialog)
+
+        # The settings form scrolls when the available display height is too
+        # small. The action buttons remain fixed beneath the scroll area.
+        dialog_layout = QtWidgets.QVBoxLayout(dialog)
+
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+
+        settings_widget = QtWidgets.QWidget()
+        layout = QtWidgets.QFormLayout(settings_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll_area.setWidget(settings_widget)
+        dialog_layout.addWidget(scroll_area)
 
         start_with_system_chk = QtWidgets.QCheckBox("Start with system")
         start_with_system_chk.setChecked(self.start_with_system)
@@ -435,7 +450,7 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             QtWidgets.QDialogButtonBox.Apply |
             QtWidgets.QDialogButtonBox.Cancel
         )
-        layout.addRow(buttons)
+        dialog_layout.addWidget(buttons)
 
         def apply_settings():
             self.start_with_system = start_with_system_chk.isChecked()
@@ -478,6 +493,22 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             QtWidgets.QDialogButtonBox.Apply
         ).clicked.connect(apply_settings)
         buttons.rejected.connect(dialog.reject)
+
+        # Keep the initial window within the usable desktop area. Any excess
+        # form height is handled by the vertical scrollbar.
+        screen = QtWidgets.QApplication.primaryScreen()
+        if screen is not None:
+            available_height = screen.availableGeometry().height()
+            preferred_height = (
+                settings_widget.sizeHint().height()
+                + buttons.sizeHint().height()
+                + 40
+            )
+            dialog.resize(
+                dialog.sizeHint().width(),
+                min(preferred_height, int(available_height * 0.9))
+            )
+
         dialog.exec_()
 
     def update_fade(self):
