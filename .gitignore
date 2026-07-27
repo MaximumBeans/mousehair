@@ -21,3 +21,9 @@ git-config.txt
 
 # Local diagnostic output, may contain private screen captures
 /tools/output/
+
+# Local Cinnamon-extension build and diagnostic output
+/cinnamon/**/output/
+/cinnamon/**/*.zip
+/cinnamon/**/*.tar
+/cinnamon/**/*.tar.gz
