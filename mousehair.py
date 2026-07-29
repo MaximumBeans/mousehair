@@ -4,7 +4,11 @@ import json
 import os
 from PyQt5 import QtWidgets, QtGui, QtCore
 from Xlib import X, XK, display
-from mousehair_app import CompositeCapture, RenderPipelineMixin
+from mousehair_app import (
+    CinnamonLensBridge,
+    CompositeCapture,
+    RenderPipelineMixin,
+)
 
 CONFIG_PATH = os.path.expanduser('~/.config/mousehair/config.json')
 
@@ -63,6 +67,10 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
 
         self.capture_provider = CompositeCapture()
 
+        # The Cinnamon extension renders the compositor-native lens.
+        # Mousehair supplies its effective opacity and visibility state.
+        self.cinnamon_lens = CinnamonLensBridge(self)
+
         self.last_mouse_pos = QtGui.QCursor.pos()
         self.last_move_time = QtCore.QElapsedTimer()
         self.last_move_time.start()
@@ -87,6 +95,9 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         self.tray.setContextMenu(self.tray_menu)
         self.tray.show()
 
+        QtWidgets.qApp.aboutToQuit.connect(self.cinnamon_lens.shutdown)
+        self._sync_cinnamon_lens(force=True)
+
     def toggle_visibility(self):
         self.visible = not self.visible
         if self.visible:
@@ -95,6 +106,25 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         else:
             self.hide()
             self.toggle_action.setText("Enable Mousehair")
+
+        self._sync_cinnamon_lens(force=True)
+
+    def _cinnamon_lens_opacity(self):
+        """Return the compositor lens opacity implied by Mousehair's state."""
+        if not self.visible:
+            return 0.0
+
+        if not self.ring_enabled or not self.magnifier_enabled:
+            return 0.0
+
+        return self.current_alpha
+
+    def _sync_cinnamon_lens(self, force=False):
+        """Forward Mousehair's effective opacity to the Cinnamon extension."""
+        self.cinnamon_lens.set_opacity(
+            self._cinnamon_lens_opacity(),
+            force=force,
+        )
 
     def load_settings(self):
         defaults = {
@@ -482,6 +512,7 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             self.arrow_border_over_line = arrow_border_over_line_chk.isChecked()
 
             self.save_settings()
+            self._sync_cinnamon_lens(force=True)
             self.update()
 
         def accept_settings():
@@ -513,6 +544,8 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
 
     def update_fade(self):
         if not self.fade_enabled:
+            self.current_alpha = self.alpha
+            self._sync_cinnamon_lens()
             return
 
         now = QtGui.QCursor.pos()
@@ -522,10 +555,21 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         elapsed = self.last_move_time.elapsed()
 
         if elapsed > self.fade_out_delay:
-            t = min(1.0, (elapsed - self.fade_out_delay) / self.fade_duration)
-            self.current_alpha = max(0.0, self.alpha * (1.0 - t))
+            if self.fade_duration <= 0:
+                self.current_alpha = 0.0
+            else:
+                t = min(
+                    1.0,
+                    (elapsed - self.fade_out_delay) / self.fade_duration,
+                )
+                self.current_alpha = max(
+                    0.0,
+                    self.alpha * (1.0 - t),
+                )
         else:
             self.current_alpha = self.alpha
+
+        self._sync_cinnamon_lens()
 
     def paintEvent(self, event):
         if self.animate_enabled:
