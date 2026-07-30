@@ -39,11 +39,23 @@ const UPDATE_INTERVAL_MS = 16;
 const DBUS_NAME = 'org.maximumbeans.Mousehair.Cinnamon';
 const DBUS_PATH = '/org/maximumbeans/Mousehair/Cinnamon';
 
+/*
+ * Cinnamon handles Super-key shortcuts itself. Registering the Mousehair
+ * shortcut here avoids the timing problems encountered with an external X11
+ * passive key grab.
+ */
+const TOGGLE_HOTKEY_NAME = 'mousehair-toggle';
+const TOGGLE_HOTKEY_ACCELERATOR = '<Super><Shift>m';
+
 const DBUS_XML = `
 <node>
   <interface name="org.maximumbeans.Mousehair.Cinnamon">
     <method name="SetOpacity">
       <arg type="d" name="opacity" direction="in"/>
+    </method>
+    <method name="SetGeometry">
+      <arg type="d" name="gap" direction="in"/>
+      <arg type="d" name="magnification" direction="in"/>
     </method>
     <method name="Show"/>
     <method name="Hide"/>
@@ -162,6 +174,7 @@ class MousehairMagnifierProof {
         this._ensureSharedGroupsInUiGroup();
         this._createLensActor();
         this._exportDbus();
+        this._registerToggleHotkey();
 
         this._refreshVisibility();
         this._updateLens();
@@ -183,6 +196,12 @@ class MousehairMagnifierProof {
             settings.disconnect(signalId);
 
         this._signalIds = [];
+
+        /*
+         * Remove the native Cinnamon shortcut before destroying the rest of the
+         * extension so no callback can arrive during teardown.
+         */
+        this._unregisterToggleHotkey();
         this._unexportDbus();
 
         if (this._lensActor) {
@@ -373,6 +392,47 @@ class MousehairMagnifierProof {
         this._refreshVisibility();
     }
 
+    _setGeometry(gap, magnification) {
+        /*
+         * Mousehair's PyQt ring is drawn at radius ``gap``. The compositor lens
+         * therefore needs a diameter of ``gap * 2`` to remain aligned with it.
+         */
+        const requestedGap = Number(gap);
+        const requestedMagnification = Number(magnification);
+
+        if (
+            Number.isFinite(requestedGap) &&
+            requestedGap > 0
+        ) {
+            this._gap = requestedGap;
+            this._lensSize = Math.max(
+                2,
+                Math.round(requestedGap * 2)
+            );
+        }
+
+        if (
+            Number.isFinite(requestedMagnification) &&
+            requestedMagnification >= 1.0
+        ) {
+            this._magnification = requestedMagnification;
+        }
+
+        if (this._lensActor) {
+            this._lensActor.set_size(
+                this._lensSize,
+                this._lensSize
+            );
+        }
+
+        /*
+         * Recalculate the actor and clone positions immediately rather than
+         * waiting for the next normal 16 ms compositor update.
+         */
+        this._updateLens();
+        this._refreshVisibility();
+    }
+
     _updateLens() {
         if (!this._lensActor || !this._clone)
             return GLib.SOURCE_REMOVE;
@@ -423,11 +483,51 @@ class MousehairMagnifierProof {
         return GLib.SOURCE_CONTINUE;
     }
 
+    _registerToggleHotkey() {
+        /*
+         * Cinnamon's keybinding manager is the authoritative owner of Super-key
+         * combinations. The callback is invoked directly by the compositor.
+         */
+        Main.keybindingManager.addHotKey(
+            TOGGLE_HOTKEY_NAME,
+            TOGGLE_HOTKEY_ACCELERATOR,
+            () => this._requestMousehairToggle()
+        );
+    }
+
+    _unregisterToggleHotkey() {
+        Main.keybindingManager.removeHotKey(
+            TOGGLE_HOTKEY_NAME
+        );
+    }
+
+    _requestMousehairToggle() {
+        /*
+         * Send SIGUSR1 to the running Python application.
+         *
+         * The bracketed character in [m]ousehair.py prevents pkill from
+         * accidentally matching its own command line.
+         */
+        try {
+            GLib.spawn_command_line_async(
+                "pkill -USR1 -f '[m]ousehair.py'"
+            );
+        } catch (error) {
+            global.logError(
+                error,
+                '[Mousehair] Failed to send hotkey toggle request'
+            );
+        }
+    }
+
     _exportDbus() {
         this._dbusObject = Gio.DBusExportedObject.wrapJSObject(
             DBUS_XML,
             {
                 SetOpacity: opacity => this._setOpacity(opacity),
+
+                SetGeometry: (gap, magnification) =>
+                    this._setGeometry(gap, magnification),
 
                 Show: () => this._setOpacity(1.0),
 

@@ -2,8 +2,9 @@
 import sys
 import json
 import os
+import signal
 from PyQt5 import QtWidgets, QtGui, QtCore
-from Xlib import X, XK, display
+from Xlib import X, XK, display, error
 from mousehair_app import (
     CinnamonLensBridge,
     CompositeCapture,
@@ -13,31 +14,142 @@ from mousehair_app import (
 CONFIG_PATH = os.path.expanduser('~/.config/mousehair/config.json')
 
 class GlobalHotkey(QtCore.QObject):
+    """Register and receive Mousehair's global X11 keyboard shortcut."""
+
     activated = QtCore.pyqtSignal()
 
-    def __init__(self):
-        super().__init__()
+    MODIFIER_MASKS = {
+        "SHIFT": X.ShiftMask,
+        "CTRL": X.ControlMask,
+        "CONTROL": X.ControlMask,
+        "ALT": X.Mod1Mask,
+        "SUPER": X.Mod4Mask,
+        "META": X.Mod4Mask,
+    }
+
+    def __init__(self, key="M", modifiers=None, parent=None):
+        super().__init__(parent)
+
         self.dpy = display.Display()
         self.root = self.dpy.screen().root
-        self.root.change_attributes(event_mask=X.KeyPressMask)
 
-        self.keycode = self.dpy.keysym_to_keycode(XK.string_to_keysym('M'))
-        self.modifiers = X.Mod4Mask | X.ShiftMask
+        self.key_name = str(key or "M").upper()
+        self.modifier_names = list(modifiers or ["SUPER", "SHIFT"])
 
-        for mod in [self.modifiers, self.modifiers | X.LockMask, self.modifiers | X.Mod2Mask, self.modifiers | X.LockMask | X.Mod2Mask]:
-            self.root.grab_key(self.keycode, mod, True, X.GrabModeAsync, X.GrabModeAsync)
+        keysym = XK.string_to_keysym(self.key_name.lower())
+        self.keycode = self.dpy.keysym_to_keycode(keysym)
 
-        self.notifier = QtCore.QSocketNotifier(self.dpy.fileno(), QtCore.QSocketNotifier.Read)
-        self.notifier.activated.connect(self.process_events)
+        if not self.keycode:
+            raise RuntimeError(
+                f"Mousehair could not resolve hotkey key {self.key_name!r}."
+            )
+
+        self.modifiers = 0
+        for name in self.modifier_names:
+            mask = self.MODIFIER_MASKS.get(str(name).upper())
+            if mask is not None:
+                self.modifiers |= mask
+
+        self._grabbed_masks = []
+        self._register_grabs()
+
+        # QSocketNotifier proved unreliable for this passive X11 key grab on
+        # Cinnamon. A lightweight Qt timer keeps all event processing inside
+        # the ordinary Qt event loop instead.
+        #
+        # Ten milliseconds is quick enough for the shortcut to feel immediate
+        # while remaining negligible compared with Mousehair's 16 ms drawing
+        # and fade timers.
+        self.event_timer = QtCore.QTimer(self)
+        self.event_timer.setInterval(10)
+        self.event_timer.timeout.connect(self.process_events)
+        self.event_timer.start()
+
+    def _register_grabs(self):
+        """Grab the shortcut with common lock-key combinations ignored.
+
+        Caps Lock, Num Lock, and Scroll Lock can appear as extra modifier bits
+        in X11 key events. Registering each combination keeps the shortcut
+        working regardless of those lock states.
+        """
+        ignored_locks = [
+            X.LockMask,
+            X.Mod2Mask,
+            X.Mod5Mask,
+        ]
+
+        lock_combinations = {0}
+        for lock_mask in ignored_locks:
+            lock_combinations |= {
+                existing | lock_mask
+                for existing in tuple(lock_combinations)
+            }
+
+        failed_masks = []
+
+        for lock_mask in sorted(lock_combinations):
+            grab_mask = self.modifiers | lock_mask
+            catcher = error.CatchError(error.BadAccess)
+
+            self.root.grab_key(
+                self.keycode,
+                grab_mask,
+                False,
+                X.GrabModeAsync,
+                X.GrabModeAsync,
+                onerror=catcher,
+            )
+            self.dpy.sync()
+
+            if catcher.get_error() is None:
+                self._grabbed_masks.append(grab_mask)
+            else:
+                failed_masks.append(grab_mask)
+
+        if not self._grabbed_masks:
+            shortcut = "+".join(
+                [*self.modifier_names, self.key_name]
+            )
+            raise RuntimeError(
+                f"Mousehair could not register {shortcut}. "
+                "Another application or Cinnamon shortcut is already using it."
+            )
+
+        if failed_masks:
+            print(
+                "Mousehair warning: some lock-state variants of the global "
+                "hotkey could not be registered.",
+                file=sys.stderr,
+            )
 
     def process_events(self):
+        """Drain pending X11 events and emit the shortcut activation signal."""
         while self.dpy.pending_events():
             event = self.dpy.next_event()
-            if event.type == X.KeyPress and event.detail == self.keycode:
+
+            if (
+                event.type == X.KeyPress
+                and event.detail == self.keycode
+            ):
                 self.activated.emit()
-                self.dpy.allow_events(X.AsyncKeyboard, event.time)
+
+    def close(self):
+        """Release every passive key grab owned by this object."""
+        if self.event_timer.isActive():
+            self.event_timer.stop()
+
+        for grab_mask in self._grabbed_masks:
+            self.root.ungrab_key(self.keycode, grab_mask)
+
+        self._grabbed_masks.clear()
+        self.dpy.sync()
 
 class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
+    # Unix signals cannot directly manipulate Qt widgets safely in a
+    # portable way. This Qt signal carries the request into the normal
+    # application event loop before visibility is changed.
+    toggle_requested = QtCore.pyqtSignal()
+
     def __init__(self):
         super().__init__()
         self.load_settings()
@@ -77,8 +189,14 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
 
         self.visible = True
 
-        self.hotkey = GlobalHotkey()
-        self.hotkey.activated.connect(self.toggle_visibility)
+        # Cinnamon owns Super-key combinations and proved unreliable when
+        # Mousehair attempted to grab this shortcut directly through X11.
+        #
+        # The Cinnamon extension now registers Super+Shift+M natively and sends
+        # SIGUSR1 to this process. The Python signal handler emits a Qt signal,
+        # keeping the actual widget operation inside Qt's event loop.
+        self.toggle_requested.connect(self.toggle_visibility)
+        signal.signal(signal.SIGUSR1, self._handle_toggle_signal)
 
         self.tray_menu = QtWidgets.QMenu()
         self.toggle_action = self.tray_menu.addAction("Disable Mousehair")
@@ -96,7 +214,19 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         self.tray.show()
 
         QtWidgets.qApp.aboutToQuit.connect(self.cinnamon_lens.shutdown)
+
+        # The Cinnamon extension cannot infer later settings changes merely
+        # from the opacity stream. Send its initial viewport dimensions and
+        # zoom factor explicitly.
+        self.cinnamon_lens.set_geometry(
+            self.gap,
+            self.magnification,
+        )
         self._sync_cinnamon_lens(force=True)
+
+    def _handle_toggle_signal(self, _signal_number, _stack_frame):
+        """Receive the Cinnamon extension's SIGUSR1 toggle request."""
+        self.toggle_requested.emit()
 
     def toggle_visibility(self):
         self.visible = not self.visible
@@ -512,6 +642,14 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             self.arrow_border_over_line = arrow_border_over_line_chk.isChecked()
 
             self.save_settings()
+
+            # Resize and rescale the compositor-native lens immediately. The
+            # extension no longer needs to be restarted after Gap or
+            # Magnification changes.
+            self.cinnamon_lens.set_geometry(
+                self.gap,
+                self.magnification,
+            )
             self._sync_cinnamon_lens(force=True)
             self.update()
 
