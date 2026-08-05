@@ -134,13 +134,10 @@ class MousehairMagnifierProof {
         this._ringOuterColour = '#000000';
         this._ringInnerColour = '#FFFFFF';
         /*
-         * The apparent circular lens is assembled from rectangular actors.
-         *
-         * ``_normalClone`` fills the complete square with an unmagnified copy
-         * of the desktop. ``_magnifiedStrips`` contains narrow horizontal
-         * chords which together form the magnified circular region.
+         * The apparent circular lens is assembled from thin rectangular
+         * magnified chords. Everything outside those chords remains
+         * transparent, allowing the real desktop beneath to show through.
          */
-        this._normalClone = null;
         this._magnifiedStrips = [];
         this._stripHeight = 2;
 
@@ -242,7 +239,6 @@ class MousehairMagnifierProof {
         if (this._lensActor) {
             this._lensActor.destroy();
             this._lensActor = null;
-            this._normalClone = null;
             this._magnifiedStrips = [];
             this._clone = null;
             this._maskEffect = null;
@@ -314,20 +310,8 @@ class MousehairMagnifierProof {
         });
 
         /*
-         * First paint an ordinary, unmagnified view of the desktop across the
-         * complete square. The square corners will therefore look exactly like
-         * the desktop behind the lens rather than like magnified content.
-         */
-        this._normalClone = new Clutter.Clone({
-            source: Main.uiGroup,
-            reactive: false,
-        });
-
-        this._lensActor.add_child(this._normalClone);
-
-        /*
-         * Magnified circular content is added above the normal clone as thin
-         * rectangular chords. Rebuilding is also used whenever Gap changes.
+         * Magnified circular content is assembled from thin rectangular
+         * chords. Rebuilding is also used whenever Gap changes.
          */
         this._rebuildMagnifiedStrips();
 
@@ -730,7 +714,7 @@ class MousehairMagnifierProof {
     }
 
     _updateLens() {
-        if (!this._lensActor || !this._normalClone)
+        if (!this._lensActor)
             return GLib.SOURCE_REMOVE;
 
         const cinnamonActive = this._isCinnamonMagnifierActive();
@@ -767,18 +751,6 @@ class MousehairMagnifierProof {
             this._ringActor.raise_top();
         }
 
-
-        /*
-         * Align the ordinary clone with the real desktop. Since the lens actor
-         * itself sits at lensX/lensY, moving the clone by the negative of those
-         * coordinates makes every square-corner pixel match the desktop behind
-         * it.
-         */
-        this._normalClone.set_scale(1.0, 1.0);
-        this._normalClone.set_position(
-            -Math.round(lensX),
-            -Math.round(lensY)
-        );
 
         /*
          * The desktop point under the pointer belongs at the centre of the
