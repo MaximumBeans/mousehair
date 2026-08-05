@@ -211,25 +211,29 @@ class RenderPipelineMixin:
         painter.restore()
 
     def draw_ring(self, painter, mx, my, outer_pen, inner_pen):
-        """Draw the optional two-colour ring around the mouse pointer.
+        """Draw the optional two-colour PyQt fallback ring.
 
-        The crosshair arms stop `gap` pixels from the pointer, so a circle with
-        radius `gap` follows the boundary of that empty centre area.
+        The Cinnamon compositor extension supplies the visible ring whenever
+        its native magnifier is active. This PyQt ring remains useful when the
+        compositor lens is disabled or unavailable.
         """
         if not self.ring_enabled or self.gap <= 0:
             return
 
-        diameter = self.gap * 2
+        diameter = float(self.gap * 2)
+
         ring_rect = QtCore.QRectF(
-            mx - self.gap,
-            my - self.gap,
+            float(mx) - float(self.gap),
+            float(my) - float(self.gap),
             diameter,
-            diameter
+            diameter,
         )
 
         painter.setBrush(QtCore.Qt.NoBrush)
+
         painter.setPen(outer_pen)
         painter.drawEllipse(ring_rect)
+
         painter.setPen(inner_pen)
         painter.drawEllipse(ring_rect)
 

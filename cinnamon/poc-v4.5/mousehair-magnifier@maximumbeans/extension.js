@@ -57,6 +57,14 @@ const DBUS_XML = `
       <arg type="d" name="gap" direction="in"/>
       <arg type="d" name="magnification" direction="in"/>
     </method>
+    <method name="SetRingStyle">
+      <arg type="d" name="radius" direction="in"/>
+      <arg type="d" name="outerThickness" direction="in"/>
+      <arg type="d" name="innerThickness" direction="in"/>
+      <arg type="s" name="outerColour" direction="in"/>
+      <arg type="s" name="innerColour" direction="in"/>
+    </method>
+    <method name="Heartbeat"/>
     <method name="Show"/>
     <method name="Hide"/>
     <method name="GetState">
@@ -118,6 +126,28 @@ class CircularMaskEffect extends Clutter.ShaderEffect {
 class MousehairMagnifierProof {
     constructor() {
         this._lensActor = null;
+
+        this._ringActor = null;
+        this._ringRadius = this._gap;
+        this._ringOuterThickness = 4.0;
+        this._ringInnerThickness = 2.0;
+        this._ringOuterColour = '#000000';
+        this._ringInnerColour = '#FFFFFF';
+        /*
+         * The apparent circular lens is assembled from rectangular actors.
+         *
+         * ``_normalClone`` fills the complete square with an unmagnified copy
+         * of the desktop. ``_magnifiedStrips`` contains narrow horizontal
+         * chords which together form the magnified circular region.
+         */
+        this._normalClone = null;
+        this._magnifiedStrips = [];
+        this._stripHeight = 2;
+
+        /*
+         * Retained as null only so older teardown code and diagnostic builds
+         * cannot accidentally encounter an undefined field.
+         */
         this._clone = null;
         this._maskEffect = null;
 
@@ -131,7 +161,11 @@ class MousehairMagnifierProof {
         this._overlayGroupWasReparented = false;
 
         this._cinnamonMagnifierActive = false;
-        this._requestedOpacity = 1.0;
+        this._requestedOpacity = 0.0;
+
+        // Mousehair must actively keep the compositor lens alive.
+        // Starting hidden prevents the extension appearing by itself.
+        this._lastHeartbeatUs = 0;
 
         /*
          * Mousehair's ring radius is the configured crosshair gap. Therefore
@@ -173,6 +207,7 @@ class MousehairMagnifierProof {
         this._loadMousehairConfiguration();
         this._ensureSharedGroupsInUiGroup();
         this._createLensActor();
+        this._createRingActor();
         this._exportDbus();
         this._registerToggleHotkey();
 
@@ -207,9 +242,17 @@ class MousehairMagnifierProof {
         if (this._lensActor) {
             this._lensActor.destroy();
             this._lensActor = null;
+            this._normalClone = null;
+            this._magnifiedStrips = [];
             this._clone = null;
             this._maskEffect = null;
             }
+
+        if (this._ringActor) {
+            this._ringActor.destroy();
+            this._ringActor = null;
+        }
+
 
         if (!this._isCinnamonMagnifierActive())
             this._restoreSharedGroupsWeMoved();
@@ -260,54 +303,280 @@ class MousehairMagnifierProof {
 
     _createLensActor() {
         /*
-         * No decorative bezel is drawn in this transition version. The
-         * existing PyQt Mousehair ring remains the visible frame, allowing us
-         * to judge alignment directly.
+         * The outer actor is only a rectangular viewport and position anchor.
+         * It contains no coloured background, border, or shader.
          */
-        /*
-         * Diagnostic square viewport.
-         *
-         * The circular shader is deliberately absent in version 4.5. A faint
-         * coloured background and visible border make the actor's geometry
-         * impossible to mistake for a transparent or failed render.
-         */
-        this._lensActor = new St.Widget({
+        this._lensActor = new Clutter.Actor({
             reactive: false,
-            can_focus: false,
-            track_hover: false,
             width: this._lensSize,
             height: this._lensSize,
             clip_to_allocation: true,
-            style: [
-                'background-color: rgba(80, 30, 120, 0.30);',
-                'border: 3px solid rgba(255, 180, 255, 0.95);',
-            ].join(' '),
         });
 
-        this._clone = new Clutter.Clone({
+        /*
+         * First paint an ordinary, unmagnified view of the desktop across the
+         * complete square. The square corners will therefore look exactly like
+         * the desktop behind the lens rather than like magnified content.
+         */
+        this._normalClone = new Clutter.Clone({
             source: Main.uiGroup,
             reactive: false,
         });
 
-        this._lensActor.add_child(this._clone);
+        this._lensActor.add_child(this._normalClone);
 
         /*
-         * Apply the mask after attaching the live clone. The purple diagnostic
-         * viewport from v4.4 remains in place, but only its circular portion
-         * should now be visible.
+         * Magnified circular content is added above the normal clone as thin
+         * rectangular chords. Rebuilding is also used whenever Gap changes.
          */
-        this._maskEffect = new CircularMaskEffect();
-        this._lensActor.add_effect_with_name(
-            'mousehair-circular-mask',
-            this._maskEffect
-        );
+        this._rebuildMagnifiedStrips();
 
         /*
-         * The lens stays outside Main.uiGroup. It therefore cannot appear in
-         * the scene that it clones, avoiding recursive magnification.
+         * Keep every lens actor outside Main.uiGroup. Main.uiGroup is the clone
+         * source, so excluding the lens prevents recursive self-magnification.
          */
         global.stage.add_child(this._lensActor);
         this._lensActor.raise_top();
+    }
+
+    _rebuildMagnifiedStrips() {
+        /*
+         * Destroy strips belonging to the previous lens size.
+         */
+        for (const entry of this._magnifiedStrips) {
+            if (entry.actor)
+                entry.actor.destroy();
+        }
+
+        this._magnifiedStrips = [];
+
+        if (!this._lensActor || this._lensSize <= 0)
+            return;
+
+        const diameter = this._lensSize;
+        const radius = diameter / 2.0;
+        const stripHeight = Math.max(1, this._stripHeight);
+
+        /*
+         * For each horizontal band, calculate the width of the corresponding
+         * circle chord:
+         *
+         *     halfChord = sqrt(radius² - distanceFromCentre²)
+         *
+         * The chord actor clips its magnified clone to that rectangle.
+         */
+        for (let top = 0; top < diameter; top += stripHeight) {
+            const actualHeight = Math.min(
+                stripHeight,
+                diameter - top
+            );
+
+            const sampleY = Math.min(
+                diameter - 0.5,
+                top + actualHeight / 2.0
+            );
+
+            const dy = sampleY - radius;
+            const inside = Math.max(
+                0.0,
+                radius * radius - dy * dy
+            );
+            const halfChord = Math.sqrt(inside);
+
+            let left = Math.floor(radius - halfChord);
+            let right = Math.ceil(radius + halfChord);
+
+            left = Math.max(0, Math.min(diameter, left));
+            right = Math.max(left, Math.min(diameter, right));
+
+            const chordWidth = right - left;
+
+            if (chordWidth <= 0)
+                continue;
+
+            const stripActor = new Clutter.Actor({
+                reactive: false,
+                x: left,
+                y: top,
+                width: chordWidth,
+                height: actualHeight,
+                clip_to_allocation: true,
+            });
+
+            const stripClone = new Clutter.Clone({
+                source: Main.uiGroup,
+                reactive: false,
+            });
+
+            stripActor.add_child(stripClone);
+            this._lensActor.add_child(stripActor);
+
+            this._magnifiedStrips.push({
+                actor: stripActor,
+                clone: stripClone,
+                left,
+                top,
+            });
+        }
+    }
+
+    _parseHexColour(value, fallback) {
+        const text = String(value || fallback || '#FFFFFF').trim();
+        const match = /^#?([0-9a-fA-F]{6})$/.exec(text);
+
+        if (!match)
+            return this._parseHexColour(fallback || '#FFFFFF', '#FFFFFF');
+
+        const packed = match[1];
+
+        return {
+            red: parseInt(packed.slice(0, 2), 16) / 255.0,
+            green: parseInt(packed.slice(2, 4), 16) / 255.0,
+            blue: parseInt(packed.slice(4, 6), 16) / 255.0,
+        };
+    }
+
+    _createRingActor() {
+        /*
+         * St.DrawingArea paints after the magnified strips and is raised above
+         * the lens actor. This is the visible compositor-native ring.
+         */
+        this._ringActor = new St.DrawingArea({
+            reactive: false,
+            can_focus: false,
+            track_hover: false,
+        });
+
+        this._ringActor.connect(
+            'repaint',
+            actor => this._paintRing(actor)
+        );
+
+        global.stage.add_child(this._ringActor);
+        this._resizeRingActor();
+        this._ringActor.raise_top();
+    }
+
+    _resizeRingActor() {
+        if (!this._ringActor)
+            return;
+
+        /*
+         * The ring's outside edge reaches the configured gap radius.
+         * Leave two extra pixels around the allocation for antialiasing.
+         */
+        const diameter = Math.max(
+            2,
+            Math.ceil(this._ringRadius * 2.0 + 4.0)
+        );
+
+        this._ringActor.set_size(diameter, diameter);
+        this._ringActor.queue_repaint();
+    }
+
+    _paintRing(actor) {
+        const context = actor.get_context();
+        const width = actor.width;
+        const height = actor.height;
+
+        const centreX = width / 2.0;
+        const centreY = height / 2.0;
+
+        /*
+         * The outer stroke's outside edge must land exactly on _ringRadius.
+         * Cairo centres strokes on their path, so move the path inward by half
+         * of the outer thickness.
+         */
+        const outerThickness = Math.max(
+            0.0,
+            Number(this._ringOuterThickness)
+        );
+
+        const innerThickness = Math.max(
+            0.0,
+            Number(this._ringInnerThickness)
+        );
+
+        const centrelineRadius = Math.max(
+            0.5,
+            Number(this._ringRadius) - outerThickness / 2.0
+        );
+
+        const outer = this._parseHexColour(
+            this._ringOuterColour,
+            '#000000'
+        );
+
+        const inner = this._parseHexColour(
+            this._ringInnerColour,
+            '#FFFFFF'
+        );
+
+        if (outerThickness > 0.0) {
+            context.setSourceRGBA(
+                outer.red,
+                outer.green,
+                outer.blue,
+                1.0
+            );
+            context.setLineWidth(outerThickness);
+            context.arc(
+                centreX,
+                centreY,
+                centrelineRadius,
+                0.0,
+                Math.PI * 2.0
+            );
+            context.stroke();
+        }
+
+        if (innerThickness > 0.0) {
+            context.setSourceRGBA(
+                inner.red,
+                inner.green,
+                inner.blue,
+                1.0
+            );
+            context.setLineWidth(innerThickness);
+            context.arc(
+                centreX,
+                centreY,
+                centrelineRadius,
+                0.0,
+                Math.PI * 2.0
+            );
+            context.stroke();
+        }
+
+        context.$dispose();
+    }
+
+    _setRingStyle(
+        radius,
+        outerThickness,
+        innerThickness,
+        outerColour,
+        innerColour
+    ) {
+        const requestedRadius = Number(radius);
+        const requestedOuter = Number(outerThickness);
+        const requestedInner = Number(innerThickness);
+
+        if (Number.isFinite(requestedRadius) && requestedRadius > 0.0)
+            this._ringRadius = requestedRadius;
+
+        if (Number.isFinite(requestedOuter) && requestedOuter >= 0.0)
+            this._ringOuterThickness = requestedOuter;
+
+        if (Number.isFinite(requestedInner) && requestedInner >= 0.0)
+            this._ringInnerThickness = requestedInner;
+
+        this._ringOuterColour = String(outerColour || '#000000');
+        this._ringInnerColour = String(innerColour || '#FFFFFF');
+
+        this._resizeRingActor();
+        this._updateLens();
+        this._refreshVisibility();
     }
 
     _ensureSharedGroupsInUiGroup() {
@@ -366,6 +635,8 @@ class MousehairMagnifierProof {
          */
         if (this._cinnamonMagnifierActive) {
             this._lensActor.hide();
+            if (this._ringActor)
+                this._ringActor.hide();
             return;
         }
 
@@ -373,13 +644,24 @@ class MousehairMagnifierProof {
 
         if (this._requestedOpacity <= 0.0) {
             this._lensActor.hide();
+            if (this._ringActor)
+                this._ringActor.hide();
             return;
         }
 
         this._lensActor.opacity = Math.round(
             this._requestedOpacity * 255
         );
+
+        if (this._ringActor) {
+            this._ringActor.opacity = Math.round(
+                this._requestedOpacity * 255
+            );
+        }
+
         this._lensActor.show();
+        if (this._ringActor)
+            this._ringActor.show();
         this._lensActor.raise_top();
     }
 
@@ -390,6 +672,14 @@ class MousehairMagnifierProof {
         );
 
         this._refreshVisibility();
+    }
+
+    _heartbeat() {
+        /*
+         * Any successful heartbeat proves that the Python application is
+         * alive. Visibility is still controlled independently by SetOpacity.
+         */
+        this._lastHeartbeatUs = GLib.get_monotonic_time();
     }
 
     _setGeometry(gap, magnification) {
@@ -423,6 +713,12 @@ class MousehairMagnifierProof {
                 this._lensSize,
                 this._lensSize
             );
+
+            /*
+             * Circle chords depend on the diameter, so Gap changes require a
+             * fresh strip layout rather than merely resizing the container.
+             */
+            this._rebuildMagnifiedStrips();
         }
 
         /*
@@ -434,7 +730,7 @@ class MousehairMagnifierProof {
     }
 
     _updateLens() {
-        if (!this._lensActor || !this._clone)
+        if (!this._lensActor || !this._normalClone)
             return GLib.SOURCE_REMOVE;
 
         const cinnamonActive = this._isCinnamonMagnifierActive();
@@ -459,26 +755,80 @@ class MousehairMagnifierProof {
             Math.round(lensY)
         );
 
-        this._clone.set_scale(
-            this._magnification,
-            this._magnification
+        if (this._ringActor) {
+            const ringWidth = this._ringActor.width;
+            const ringHeight = this._ringActor.height;
+
+            this._ringActor.set_position(
+                Math.round(pointerX - ringWidth / 2.0),
+                Math.round(pointerY - ringHeight / 2.0)
+            );
+
+            this._ringActor.raise_top();
+        }
+
+
+        /*
+         * Align the ordinary clone with the real desktop. Since the lens actor
+         * itself sits at lensX/lensY, moving the clone by the negative of those
+         * coordinates makes every square-corner pixel match the desktop behind
+         * it.
+         */
+        this._normalClone.set_scale(1.0, 1.0);
+        this._normalClone.set_position(
+            -Math.round(lensX),
+            -Math.round(lensY)
         );
 
         /*
          * The desktop point under the pointer belongs at the centre of the
-         * magnified lens.
+         * magnified lens. This is the same transform previously used by the
+         * single square magnifier clone.
          */
-        const cloneX =
+        const magnifiedCloneX =
             this._lensSize / 2 - pointerX * this._magnification;
-        const cloneY =
+        const magnifiedCloneY =
             this._lensSize / 2 - pointerY * this._magnification;
 
-        this._clone.set_position(
-            Math.round(cloneX),
-            Math.round(cloneY)
-        );
+        /*
+         * Each strip has its own local origin. Subtract that origin so all
+         * strip clones sample one continuous magnified desktop image.
+         */
+        for (const entry of this._magnifiedStrips) {
+            entry.clone.set_scale(
+                this._magnification,
+                this._magnification
+            );
 
+            entry.clone.set_position(
+                Math.round(magnifiedCloneX - entry.left),
+                Math.round(magnifiedCloneY - entry.top)
+            );
+        }
+
+        /*
+         * The magnified strips belong above ordinary desktop content, but the
+         * compositor-native ring must remain above the strips.
+         */
         this._lensActor.raise_top();
+
+        if (this._ringActor)
+            this._ringActor.raise_top();
+
+        /*
+         * Hide stale compositor content when Mousehair is no longer running.
+         * GLib.get_monotonic_time() is measured in microseconds.
+         */
+        const nowUs = GLib.get_monotonic_time();
+        const heartbeatAgeUs = nowUs - this._lastHeartbeatUs;
+
+        if (
+            this._lastHeartbeatUs <= 0 ||
+            heartbeatAgeUs > 2500000
+        ) {
+            this._requestedOpacity = 0.0;
+            this._refreshVisibility();
+        }
 
         return GLib.SOURCE_CONTINUE;
     }
@@ -525,6 +875,22 @@ class MousehairMagnifierProof {
             DBUS_XML,
             {
                 SetOpacity: opacity => this._setOpacity(opacity),
+
+                SetRingStyle: (
+                    radius,
+                    outerThickness,
+                    innerThickness,
+                    outerColour,
+                    innerColour
+                ) => this._setRingStyle(
+                    radius,
+                    outerThickness,
+                    innerThickness,
+                    outerColour,
+                    innerColour
+                ),
+
+                Heartbeat: () => this._heartbeat(),
 
                 SetGeometry: (gap, magnification) =>
                     this._setGeometry(gap, magnification),

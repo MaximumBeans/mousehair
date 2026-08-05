@@ -177,6 +177,16 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         self.fade_timer.timeout.connect(self.update_fade)
         self.fade_timer.start(16)
 
+        # Keep the Cinnamon compositor extension tied to this application's
+        # lifecycle. If Mousehair disappears, the extension watchdog hides the
+        # lens and ring after roughly 2.5 seconds.
+
+        self.cinnamon_heartbeat_timer = QtCore.QTimer(self)
+        self.cinnamon_heartbeat_timer.setInterval(1000)
+        self.cinnamon_heartbeat_timer.timeout.connect(
+            self._send_cinnamon_heartbeat
+        )
+
         self.capture_provider = CompositeCapture()
 
         # The Cinnamon extension renders the compositor-native lens.
@@ -222,7 +232,14 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             self.gap,
             self.magnification,
         )
+        self._sync_cinnamon_ring_style()
+        self._send_cinnamon_heartbeat()
+        self.cinnamon_heartbeat_timer.start()
         self._sync_cinnamon_lens(force=True)
+
+    def _send_cinnamon_heartbeat(self):
+        """Keep the compositor extension associated with this process."""
+        self.cinnamon_lens.heartbeat()
 
     def _handle_toggle_signal(self, _signal_number, _stack_frame):
         """Receive the Cinnamon extension's SIGUSR1 toggle request."""
@@ -248,6 +265,56 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             return 0.0
 
         return self.current_alpha
+
+    def _ring_radius(self):
+        """Return the centreline radius used to draw the visible ring.
+
+        ``self.gap`` is the distance from the pointer to the centreline endpoint
+        of each crosshair arm. The outer line stroke is centred on that endpoint,
+        so half of ``outer_thickness`` extends inward into the nominal gap.
+
+        Moving the ring centreline inward by that same half-width makes the
+        ring's outer edge meet the crosshair endpoints cleanly.
+        """
+        half_outer_width = max(
+            0.0,
+            float(self.outer_thickness) / 2.0,
+        )
+
+        return max(
+            0.5,
+            float(self.gap) - half_outer_width,
+        )
+
+    def _cinnamon_lens_radius(self):
+        """Return the radius available inside the complete visible ring.
+
+        The lens ends at the inner edge of the ring's outer stroke:
+
+            ring centreline - outer_thickness / 2
+
+        Since the ring centreline is already ``gap - outer_thickness / 2``,
+        this is equivalent to ``gap - outer_thickness``.
+        """
+        half_outer_width = max(
+            0.0,
+            float(self.outer_thickness) / 2.0,
+        )
+
+        return max(
+            1.0,
+            self._ring_radius() - half_outer_width,
+        )
+
+    def _sync_cinnamon_ring_style(self):
+        """Send the visible ring appearance to the Cinnamon extension."""
+        self.cinnamon_lens.set_ring_style(
+            radius=float(self.gap),
+            outer_thickness=float(self.outer_thickness),
+            inner_thickness=float(self.inner_thickness),
+            outer_colour=self.outer_color,
+            inner_colour=self.inner_color,
+        )
 
     def _sync_cinnamon_lens(self, force=False):
         """Forward Mousehair's effective opacity to the Cinnamon extension."""
@@ -650,6 +717,7 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
                 self.gap,
                 self.magnification,
             )
+            self._sync_cinnamon_ring_style()
             self._sync_cinnamon_lens(force=True)
             self.update()
 
