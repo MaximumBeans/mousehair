@@ -9,6 +9,7 @@ from mousehair_app import (
     CinnamonLensBridge,
     CompositeCapture,
     RenderPipelineMixin,
+    ReticleGeometry,
 )
 
 CONFIG_PATH = os.path.expanduser('~/.config/mousehair/config.json')
@@ -266,45 +267,21 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
 
         return self.current_alpha
 
+    def _reticle_geometry(self):
+        """Return the shared geometry derived from current settings."""
+        return ReticleGeometry.from_values(
+            gap=self.gap,
+            outer_thickness=self.outer_thickness,
+            inner_thickness=self.inner_thickness,
+        )
+
     def _ring_radius(self):
-        """Return the centreline radius used to draw the visible ring.
-
-        ``self.gap`` is the distance from the pointer to the centreline endpoint
-        of each crosshair arm. The outer line stroke is centred on that endpoint,
-        so half of ``outer_thickness`` extends inward into the nominal gap.
-
-        Moving the ring centreline inward by that same half-width makes the
-        ring's outer edge meet the crosshair endpoints cleanly.
-        """
-        half_outer_width = max(
-            0.0,
-            float(self.outer_thickness) / 2.0,
-        )
-
-        return max(
-            0.5,
-            float(self.gap) - half_outer_width,
-        )
+        """Return the common centreline radius for both visible ring strokes."""
+        return self._reticle_geometry().ring_centreline_radius
 
     def _cinnamon_lens_radius(self):
-        """Return the clear radius inside the PyQt-style two-tone ring.
-
-        Mousehair draws both ring strokes centred at ``gap``. The outer stroke
-        therefore extends half of ``outer_thickness`` inward and half outward.
-
-        The compositor lens must finish at that stroke's inner edge:
-
-            gap - outer_thickness / 2
-        """
-        half_outer_width = max(
-            0.0,
-            float(self.outer_thickness) / 2.0,
-        )
-
-        return max(
-            1.0,
-            float(self.gap) - half_outer_width,
-        )
+        """Return the clear radius available inside the complete ring."""
+        return self._reticle_geometry().cinnamon_lens_radius
 
     def _sync_cinnamon_ring_style(self):
         """Send the visible ring appearance to the Cinnamon extension."""
