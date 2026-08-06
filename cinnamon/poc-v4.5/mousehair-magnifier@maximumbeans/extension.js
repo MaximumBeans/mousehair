@@ -392,6 +392,17 @@ class MousehairMagnifierProof {
                 reactive: false,
             });
 
+            /*
+             * Magnification changes only when SetGeometry is received.
+             * SetGeometry rebuilds all strips, so applying the scale once here
+             * avoids repeating an unchanged operation on every compositor
+             * frame.
+             */
+            stripClone.set_scale(
+                this._magnification,
+                this._magnification
+            );
+
             stripActor.add_child(stripClone);
             this._lensActor.add_child(stripActor);
 
@@ -784,11 +795,6 @@ class MousehairMagnifierProof {
          * strip clones sample one continuous magnified desktop image.
          */
         for (const entry of this._magnifiedStrips) {
-            entry.clone.set_scale(
-                this._magnification,
-                this._magnification
-            );
-
             entry.clone.set_position(
                 Math.round(magnifiedCloneX - entry.left),
                 Math.round(magnifiedCloneY - entry.top)
