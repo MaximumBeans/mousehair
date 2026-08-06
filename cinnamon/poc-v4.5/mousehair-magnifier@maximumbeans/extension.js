@@ -139,7 +139,13 @@ class MousehairMagnifierProof {
          * transparent, allowing the real desktop beneath to show through.
          */
         this._magnifiedStrips = [];
-        this._stripHeight = 2;
+        /*
+         * Four-pixel chords approximately halve the number of Clutter clones
+         * that must move with every pointer update. The compositor-native ring
+         * covers the lens boundary, so the larger strips should not visibly
+         * alter the circular edge.
+         */
+        this._stripHeight = 4;
 
         /*
          * Retained as null only so older teardown code and diagnostic builds
