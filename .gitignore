@@ -27,3 +27,5 @@ git-config.txt
 /cinnamon/**/*.zip
 /cinnamon/**/*.tar
 /cinnamon/**/*.tar.gz
+
+/tools/output/
