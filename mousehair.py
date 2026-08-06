@@ -287,14 +287,14 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         )
 
     def _cinnamon_lens_radius(self):
-        """Return the radius available inside the complete visible ring.
+        """Return the clear radius inside the PyQt-style two-tone ring.
 
-        The lens ends at the inner edge of the ring's outer stroke:
+        Mousehair draws both ring strokes centred at ``gap``. The outer stroke
+        therefore extends half of ``outer_thickness`` inward and half outward.
 
-            ring centreline - outer_thickness / 2
+        The compositor lens must finish at that stroke's inner edge:
 
-        Since the ring centreline is already ``gap - outer_thickness / 2``,
-        this is equivalent to ``gap - outer_thickness``.
+            gap - outer_thickness / 2
         """
         half_outer_width = max(
             0.0,
@@ -303,7 +303,7 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
 
         return max(
             1.0,
-            self._ring_radius() - half_outer_width,
+            float(self.gap) - half_outer_width,
         )
 
     def _sync_cinnamon_ring_style(self):

@@ -73,6 +73,36 @@ class CinnamonLensBridge(QtCore.QObject):
 
         self._start_call(opacity)
 
+    def _start_silent_detached_call(self, method, arguments=None):
+        """Run a low-frequency gdbus call without inheriting terminal output."""
+        command = [
+            "gdbus",
+            "call",
+            "--session",
+            "--dest",
+            self.DBUS_DESTINATION,
+            "--object-path",
+            self.DBUS_OBJECT_PATH,
+            "--method",
+            method,
+        ]
+
+        if arguments:
+            command.extend(str(argument) for argument in arguments)
+
+        try:
+            subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            # Cinnamon integration is optional. Mousehair must remain usable
+            # when gdbus or the extension is unavailable.
+            pass
+
     def set_geometry(self, gap, magnification):
         """Send the compositor lens radius and zoom factor to Cinnamon.
 
@@ -94,17 +124,9 @@ class CinnamonLensBridge(QtCore.QObject):
         gap = max(1.0, gap)
         magnification = max(1.0, magnification)
 
-        QtCore.QProcess.startDetached(
-            "gdbus",
+        self._start_silent_detached_call(
+            self.DBUS_GEOMETRY_METHOD,
             [
-                "call",
-                "--session",
-                "--dest",
-                self.DBUS_DESTINATION,
-                "--object-path",
-                self.DBUS_OBJECT_PATH,
-                "--method",
-                self.DBUS_GEOMETRY_METHOD,
                 format(gap, ".6f"),
                 format(magnification, ".6f"),
             ],
@@ -142,17 +164,9 @@ class CinnamonLensBridge(QtCore.QObject):
         outer_colour = str(outer_colour or "#000000")
         inner_colour = str(inner_colour or "#FFFFFF")
 
-        QtCore.QProcess.startDetached(
-            "gdbus",
+        self._start_silent_detached_call(
+            self.DBUS_RING_STYLE_METHOD,
             [
-                "call",
-                "--session",
-                "--dest",
-                self.DBUS_DESTINATION,
-                "--object-path",
-                self.DBUS_OBJECT_PATH,
-                "--method",
-                self.DBUS_RING_STYLE_METHOD,
                 format(radius, ".6f"),
                 format(outer_thickness, ".6f"),
                 format(inner_thickness, ".6f"),
@@ -162,29 +176,10 @@ class CinnamonLensBridge(QtCore.QObject):
         )
 
     def heartbeat(self):
-        """Tell Cinnamon that Mousehair is alive without terminal output."""
-        try:
-            subprocess.Popen(
-                [
-                    "gdbus",
-                    "call",
-                    "--session",
-                    "--dest",
-                    self.DBUS_DESTINATION,
-                    "--object-path",
-                    self.DBUS_OBJECT_PATH,
-                    "--method",
-                    self.DBUS_HEARTBEAT_METHOD,
-                ],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        except OSError:
-            # A missing gdbus executable or unavailable extension must not stop
-            # Mousehair itself.
-            pass
+        """Tell Cinnamon that Mousehair is still running."""
+        self._start_silent_detached_call(
+            self.DBUS_HEARTBEAT_METHOD,
+        )
 
     def hide(self, force=True):
         """Hide the Cinnamon lens without changing Mousehair's own settings."""

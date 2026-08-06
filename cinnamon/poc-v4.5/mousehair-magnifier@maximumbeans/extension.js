@@ -446,12 +446,20 @@ class MousehairMagnifierProof {
             return;
 
         /*
-         * The ring's outside edge reaches the configured gap radius.
-         * Leave two extra pixels around the allocation for antialiasing.
+         * PyQt draws the ring stroke centred at _ringRadius. The allocation
+         * must therefore include half of the outer stroke beyond that radius,
+         * plus a small antialiasing margin.
          */
+        const outerHalfWidth = Math.max(
+            0.0,
+            Number(this._ringOuterThickness) / 2.0
+        );
+
         const diameter = Math.max(
             2,
-            Math.ceil(this._ringRadius * 2.0 + 4.0)
+            Math.ceil(
+                (this._ringRadius + outerHalfWidth) * 2.0 + 4.0
+            )
         );
 
         this._ringActor.set_size(diameter, diameter);
@@ -467,9 +475,10 @@ class MousehairMagnifierProof {
         const centreY = height / 2.0;
 
         /*
-         * The outer stroke's outside edge must land exactly on _ringRadius.
-         * Cairo centres strokes on their path, so move the path inward by half
-         * of the outer thickness.
+         * Match Mousehair's PyQt renderer exactly: both strokes are centred on
+         * the configured gap radius. Painting the wide outer stroke first and
+         * the narrow inner stroke second leaves black visible on both sides of
+         * the white centre.
          */
         const outerThickness = Math.max(
             0.0,
@@ -483,7 +492,7 @@ class MousehairMagnifierProof {
 
         const centrelineRadius = Math.max(
             0.5,
-            Number(this._ringRadius) - outerThickness / 2.0
+            Number(this._ringRadius)
         );
 
         const outer = this._parseHexColour(
@@ -646,7 +655,15 @@ class MousehairMagnifierProof {
         this._lensActor.show();
         if (this._ringActor)
             this._ringActor.show();
+
         this._lensActor.raise_top();
+
+        /*
+         * SetOpacity calls _refreshVisibility() throughout every fade. Always
+         * restore the ring above the lens here, not only in _updateLens().
+         */
+        if (this._ringActor)
+            this._ringActor.raise_top();
     }
 
     _setOpacity(opacity) {
