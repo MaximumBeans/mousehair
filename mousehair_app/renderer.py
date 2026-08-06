@@ -220,6 +220,12 @@ class RenderPipelineMixin:
         if not self.ring_enabled or self.gap <= 0:
             return
 
+        # Cinnamon draws the visible ring above its compositor-native lens.
+        # Drawing the PyQt ring simultaneously creates duplicate concentric
+        # outlines.
+        if self.magnifier_enabled:
+            return
+
         diameter = float(self.gap * 2)
 
         ring_rect = QtCore.QRectF(

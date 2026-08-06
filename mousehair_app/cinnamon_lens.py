@@ -9,6 +9,8 @@ This module intentionally contains no fade calculation of its own. It merely
 forwards Mousehair's already-computed ``current_alpha`` value over D-Bus.
 """
 
+import subprocess
+
 from PyQt5 import QtCore
 
 
@@ -160,20 +162,29 @@ class CinnamonLensBridge(QtCore.QObject):
         )
 
     def heartbeat(self):
-        """Tell the Cinnamon extension that Mousehair is still running."""
-        QtCore.QProcess.startDetached(
-            "gdbus",
-            [
-                "call",
-                "--session",
-                "--dest",
-                self.DBUS_DESTINATION,
-                "--object-path",
-                self.DBUS_OBJECT_PATH,
-                "--method",
-                self.DBUS_HEARTBEAT_METHOD,
-            ],
-        )
+        """Tell Cinnamon that Mousehair is alive without terminal output."""
+        try:
+            subprocess.Popen(
+                [
+                    "gdbus",
+                    "call",
+                    "--session",
+                    "--dest",
+                    self.DBUS_DESTINATION,
+                    "--object-path",
+                    self.DBUS_OBJECT_PATH,
+                    "--method",
+                    self.DBUS_HEARTBEAT_METHOD,
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            # A missing gdbus executable or unavailable extension must not stop
+            # Mousehair itself.
+            pass
 
     def hide(self, force=True):
         """Hide the Cinnamon lens without changing Mousehair's own settings."""

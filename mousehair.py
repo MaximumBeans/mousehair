@@ -229,7 +229,7 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         # from the opacity stream. Send its initial viewport dimensions and
         # zoom factor explicitly.
         self.cinnamon_lens.set_geometry(
-            self.gap,
+            self._cinnamon_lens_radius(),
             self.magnification,
         )
         self._sync_cinnamon_ring_style()
@@ -714,7 +714,7 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             # extension no longer needs to be restarted after Gap or
             # Magnification changes.
             self.cinnamon_lens.set_geometry(
-                self.gap,
+                self._cinnamon_lens_radius(),
                 self.magnification,
             )
             self._sync_cinnamon_ring_style()
