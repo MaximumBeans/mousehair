@@ -625,6 +625,36 @@ class MousehairMagnifierProof {
         return enabled && factor > 1.0;
     }
 
+    _setRingParentForCinnamonMagnifier(cinnamonActive) {
+        /*
+         * Mousehair's ordinary PyQt overlay belongs to Cinnamon's desktop
+         * scene and is therefore transformed by Cinnamon's magnifier.
+         *
+         * The compositor-native ring normally lives directly on global.stage
+         * so it is excluded from Mousehair's own Main.uiGroup clone source.
+         * During Cinnamon magnification, however, a stage-level ring and the
+         * magnified crosshair occupy different coordinate spaces and drift
+         * apart.
+         *
+         * Temporarily move the ring into Main.uiGroup while Cinnamon zoom is
+         * active. Move it back to global.stage before Mousehair's own lens is
+         * shown again, avoiding recursive capture by the strip clones.
+         */
+        if (!this._ringActor)
+            return;
+
+        const desiredParent = cinnamonActive
+            ? Main.uiGroup
+            : global.stage;
+
+        if (this._ringActor.get_parent() !== desiredParent) {
+            global.reparentActor(
+                this._ringActor,
+                desiredParent
+            );
+        }
+    }
+
     _refreshVisibility() {
         this._cinnamonMagnifierActive =
             this._isCinnamonMagnifierActive();
@@ -633,17 +663,43 @@ class MousehairMagnifierProof {
             return;
 
         /*
-         * Cinnamon magnification always wins. Mousehair's own lens disappears,
-         * while the ordinary Mousehair overlay remains inside Cinnamon's
-         * magnified scene.
+         * Cinnamon magnification always wins over Mousehair's compositor lens.
+         *
+         * Keep the compositor-native ring visible, however. It remains the
+         * pointer reticule even while Cinnamon provides full-screen
+         * magnification.
          */
         if (this._cinnamonMagnifierActive) {
+            /*
+             * Hide Mousehair's own lens immediately. The ring remains useful,
+             * but must join Main.uiGroup so Cinnamon transforms it together
+             * with the crosshair rather than leaving it in stage coordinates.
+             */
             this._lensActor.hide();
-            if (this._ringActor)
+            this._setRingParentForCinnamonMagnifier(true);
+
+            if (
+                this._ringActor &&
+                this._requestedOpacity > 0.0
+            ) {
+                this._ringActor.opacity = Math.round(
+                    this._requestedOpacity * 255
+                );
+                this._ringActor.show();
+                this._ringActor.raise_top();
+            } else if (this._ringActor) {
                 this._ringActor.hide();
+            }
+
             return;
         }
 
+        /*
+         * Cinnamon zoom has ended. Return the ring to the stage before
+         * restoring Mousehair's strip-built lens, otherwise Main.uiGroup's
+         * clones would capture the ring recursively.
+         */
+        this._setRingParentForCinnamonMagnifier(false);
         this._ensureSharedGroupsInUiGroup();
 
         if (this._requestedOpacity <= 0.0) {
@@ -750,56 +806,113 @@ class MousehairMagnifierProof {
         if (cinnamonActive !== this._cinnamonMagnifierActive)
             this._refreshVisibility();
 
-        if (this._cinnamonMagnifierActive)
-            return GLib.SOURCE_CONTINUE;
-
         const [pointerX, pointerY] = global.get_pointer();
 
         /*
-         * Centre the lens directly on the pointer and, therefore, on the
-         * existing Mousehair ring.
+         * The ring remains useful while Cinnamon's own magnifier is active.
+         * Position it independently from the Mousehair lens and strips.
          */
-        const lensX = pointerX - this._lensSize / 2;
-        const lensY = pointerY - this._lensSize / 2;
-
-        this._lensActor.set_position(
-            Math.round(lensX),
-            Math.round(lensY)
-        );
-
         if (this._ringActor) {
             const ringWidth = this._ringActor.width;
             const ringHeight = this._ringActor.height;
+            const ringParent = this._ringActor.get_parent();
+
+            /*
+             * global.get_pointer() returns stage coordinates.
+             *
+             * While Cinnamon magnification is active, the ring belongs to
+             * Main.uiGroup, which is transformed by the magnifier. Convert the
+             * pointer into that parent's local coordinate space before placing
+             * the ring. Otherwise the transformed actor appears to drift or
+             * chase the pointer.
+             */
+            let localPointerX = pointerX;
+            let localPointerY = pointerY;
+
+            if (
+                ringParent &&
+                ringParent !== global.stage
+            ) {
+                const transformed =
+                    ringParent.transform_stage_point(pointerX, pointerY);
+
+                if (
+                    transformed &&
+                    transformed.length >= 3 &&
+                    transformed[0]
+                ) {
+                    localPointerX = transformed[1];
+                    localPointerY = transformed[2];
+                }
+            }
 
             this._ringActor.set_position(
-                Math.round(pointerX - ringWidth / 2.0),
-                Math.round(pointerY - ringHeight / 2.0)
+                Math.round(localPointerX - ringWidth / 2.0),
+                Math.round(localPointerY - ringHeight / 2.0)
             );
 
             this._ringActor.raise_top();
         }
 
+        /*
+         * Suppress Mousehair's compositor lens immediately when Cinnamon's
+         * magnifier is active. Ring positioning above has already occurred.
+         */
+        if (this._cinnamonMagnifierActive)
+            return GLib.SOURCE_CONTINUE;
 
         /*
-         * The desktop point under the pointer belongs at the centre of the
-         * magnified lens. This is the same transform previously used by the
-         * single square magnifier clone.
+         * Updating every strip is the expensive part of the compositor lens.
+         * The timer must continue running for visibility and heartbeat checks,
+         * but the lens geometry only needs updating when the pointer moves.
          */
-        const magnifiedCloneX =
-            this._lensSize / 2 - pointerX * this._magnification;
-        const magnifiedCloneY =
-            this._lensSize / 2 - pointerY * this._magnification;
+        const pointerMoved =
+            pointerX !== this._lastLensPointerX ||
+            pointerY !== this._lastLensPointerY;
 
-        /*
-         * Each strip has its own local origin. Subtract that origin so all
-         * strip clones sample one continuous magnified desktop image.
-         */
-        for (const entry of this._magnifiedStrips) {
-            entry.clone.set_position(
-                Math.round(magnifiedCloneX - entry.left),
-                Math.round(magnifiedCloneY - entry.top)
+        if (pointerMoved) {
+            this._lastLensPointerX = pointerX;
+            this._lastLensPointerY = pointerY;
+
+            /*
+             * Centre the lens directly on the pointer and, therefore, on the
+             * existing Mousehair ring.
+             */
+            const lensX = pointerX - this._lensSize / 2;
+            const lensY = pointerY - this._lensSize / 2;
+
+            this._lensActor.set_position(
+                Math.round(lensX),
+                Math.round(lensY)
             );
+
+            /*
+             * The desktop point under the pointer belongs at the centre of the
+             * magnified lens.
+             */
+            const magnifiedCloneX =
+                this._lensSize / 2 - pointerX * this._magnification;
+            const magnifiedCloneY =
+                this._lensSize / 2 - pointerY * this._magnification;
+
+            /*
+             * Each strip has its own local origin. Subtract that origin so all
+             * strip clones sample one continuous magnified desktop image.
+             */
+            for (const entry of this._magnifiedStrips) {
+                entry.clone.set_position(
+                    Math.round(magnifiedCloneX - entry.left),
+                    Math.round(magnifiedCloneY - entry.top)
+                );
+            }
         }
+
+        /*
+         * Raising the ring is cheap and preserves the required stacking order
+         * even when another Cinnamon actor appears while the pointer is still.
+         */
+        if (this._ringActor)
+            this._ringActor.raise_top();
 
         /*
          * The magnified strips belong above ordinary desktop content, but the
