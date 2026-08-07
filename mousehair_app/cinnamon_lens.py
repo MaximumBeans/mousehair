@@ -24,6 +24,7 @@ class CinnamonLensBridge(QtCore.QObject):
     DBUS_GEOMETRY_METHOD = f"{DBUS_INTERFACE}.SetGeometry"
     DBUS_RING_STYLE_METHOD = f"{DBUS_INTERFACE}.SetRingStyle"
     DBUS_HEARTBEAT_METHOD = f"{DBUS_INTERFACE}.Heartbeat"
+    DBUS_SYNC_STATE_METHOD = f"{DBUS_INTERFACE}.SynchroniseState"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -172,6 +173,39 @@ class CinnamonLensBridge(QtCore.QObject):
                 format(inner_thickness, ".6f"),
                 outer_colour,
                 inner_colour,
+            ],
+        )
+
+    def synchronise_state(
+        self,
+        *,
+        lens_radius,
+        magnification,
+        ring_radius,
+        outer_thickness,
+        inner_thickness,
+        outer_colour,
+        inner_colour,
+        opacity,
+    ):
+        """Send one complete compositor-state snapshot.
+
+        This method is intentionally safe to call periodically. If Cinnamon has
+        restarted, the new extension instance receives enough information to
+        rebuild its ring, magnifier geometry, colours, opacity, and heartbeat
+        state without requiring Mousehair itself to restart.
+        """
+        self._start_silent_detached_call(
+            self.DBUS_SYNC_STATE_METHOD,
+            [
+                format(float(lens_radius), ".6f"),
+                format(float(magnification), ".6f"),
+                format(float(ring_radius), ".6f"),
+                format(float(outer_thickness), ".6f"),
+                format(float(inner_thickness), ".6f"),
+                str(outer_colour),
+                str(inner_colour),
+                format(float(opacity), ".6f"),
             ],
         )
 

@@ -65,6 +65,16 @@ const DBUS_XML = `
       <arg type="s" name="innerColour" direction="in"/>
     </method>
     <method name="Heartbeat"/>
+    <method name="SynchroniseState">
+      <arg type="d" name="lensRadius" direction="in"/>
+      <arg type="d" name="magnification" direction="in"/>
+      <arg type="d" name="ringRadius" direction="in"/>
+      <arg type="d" name="outerThickness" direction="in"/>
+      <arg type="d" name="innerThickness" direction="in"/>
+      <arg type="s" name="outerColour" direction="in"/>
+      <arg type="s" name="innerColour" direction="in"/>
+      <arg type="d" name="opacity" direction="in"/>
+    </method>
     <method name="Show"/>
     <method name="Hide"/>
     <method name="GetState">
@@ -748,6 +758,41 @@ class MousehairMagnifierProof {
         this._refreshVisibility();
     }
 
+    _synchroniseState(
+        lensRadius,
+        magnification,
+        ringRadius,
+        outerThickness,
+        innerThickness,
+        outerColour,
+        innerColour,
+        opacity
+    ) {
+        /*
+         * Mousehair is the authority for compositor state. Receiving this
+         * complete snapshot both refreshes the watchdog heartbeat and restores
+         * every piece of state needed after a Cinnamon restart.
+         */
+        this._heartbeat();
+
+        this._setGeometry(
+            lensRadius,
+            magnification
+        );
+
+        this._setRingStyle(
+            ringRadius,
+            outerThickness,
+            innerThickness,
+            outerColour,
+            innerColour
+        );
+
+        this._setOpacity(
+            opacity
+        );
+    }
+
     _heartbeat() {
         /*
          * Any successful heartbeat proves that the Python application is
@@ -1005,6 +1050,26 @@ class MousehairMagnifierProof {
                 ),
 
                 Heartbeat: () => this._heartbeat(),
+
+                SynchroniseState: (
+                    lensRadius,
+                    magnification,
+                    ringRadius,
+                    outerThickness,
+                    innerThickness,
+                    outerColour,
+                    innerColour,
+                    opacity
+                ) => this._synchroniseState(
+                    lensRadius,
+                    magnification,
+                    ringRadius,
+                    outerThickness,
+                    innerThickness,
+                    outerColour,
+                    innerColour,
+                    opacity
+                ),
 
                 SetGeometry: (gap, magnification) =>
                     this._setGeometry(gap, magnification),

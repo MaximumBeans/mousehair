@@ -239,8 +239,25 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         self._sync_cinnamon_lens(force=True)
 
     def _send_cinnamon_heartbeat(self):
-        """Keep the compositor extension associated with this process."""
-        self.cinnamon_lens.heartbeat()
+        """Refresh Cinnamon with Mousehair's complete current state.
+
+        The timer doubles as a self-healing synchronisation mechanism. If
+        Cinnamon has restarted since the previous tick, the freshly loaded
+        extension receives enough state to rebuild the ring and lens without
+        requiring Mousehair to restart.
+        """
+        geometry = self._reticle_geometry()
+
+        self.cinnamon_lens.synchronise_state(
+            lens_radius=geometry.cinnamon_lens_radius,
+            magnification=self.magnification,
+            ring_radius=geometry.ring_centreline_radius,
+            outer_thickness=geometry.outer_thickness,
+            inner_thickness=geometry.inner_thickness,
+            outer_colour=self.outer_color,
+            inner_colour=self.inner_color,
+            opacity=self._cinnamon_lens_opacity(),
+        )
 
     def _handle_toggle_signal(self, _signal_number, _stack_frame):
         """Receive the Cinnamon extension's SIGUSR1 toggle request."""
