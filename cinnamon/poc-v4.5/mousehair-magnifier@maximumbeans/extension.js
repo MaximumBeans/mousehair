@@ -582,17 +582,63 @@ class MousehairMagnifierProof {
         const requestedOuter = Number(outerThickness);
         const requestedInner = Number(innerThickness);
 
-        if (Number.isFinite(requestedRadius) && requestedRadius > 0.0)
+        const requestedOuterColour =
+            String(outerColour || '#000000');
+
+        const requestedInnerColour =
+            String(innerColour || '#FFFFFF');
+
+        let styleChanged = false;
+
+        if (
+            Number.isFinite(requestedRadius) &&
+            requestedRadius > 0.0 &&
+            requestedRadius !== this._ringRadius
+        ) {
             this._ringRadius = requestedRadius;
+            styleChanged = true;
+        }
 
-        if (Number.isFinite(requestedOuter) && requestedOuter >= 0.0)
+        if (
+            Number.isFinite(requestedOuter) &&
+            requestedOuter >= 0.0 &&
+            requestedOuter !== this._ringOuterThickness
+        ) {
             this._ringOuterThickness = requestedOuter;
+            styleChanged = true;
+        }
 
-        if (Number.isFinite(requestedInner) && requestedInner >= 0.0)
+        if (
+            Number.isFinite(requestedInner) &&
+            requestedInner >= 0.0 &&
+            requestedInner !== this._ringInnerThickness
+        ) {
             this._ringInnerThickness = requestedInner;
+            styleChanged = true;
+        }
 
-        this._ringOuterColour = String(outerColour || '#000000');
-        this._ringInnerColour = String(innerColour || '#FFFFFF');
+        if (
+            requestedOuterColour !==
+            this._ringOuterColour
+        ) {
+            this._ringOuterColour =
+                requestedOuterColour;
+
+            styleChanged = true;
+        }
+
+        if (
+            requestedInnerColour !==
+            this._ringInnerColour
+        ) {
+            this._ringInnerColour =
+                requestedInnerColour;
+
+            styleChanged = true;
+        }
+
+        if (!styleChanged)
+            return;
 
         this._resizeRingActor();
         this._updateLens();
@@ -750,10 +796,20 @@ class MousehairMagnifierProof {
     }
 
     _setOpacity(opacity) {
-        this._requestedOpacity = Math.max(
+        const requestedOpacity = Math.max(
             0.0,
             Math.min(1.0, Number(opacity))
         );
+
+        if (
+            requestedOpacity ===
+            this._requestedOpacity
+        ) {
+            return;
+        }
+
+        this._requestedOpacity =
+            requestedOpacity;
 
         this._refreshVisibility();
     }
