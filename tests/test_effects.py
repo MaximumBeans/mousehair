@@ -58,3 +58,55 @@ class StaticEffectTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SlidingEffectTests(unittest.TestCase):
+
+    def test_sliding_effect_draws_outer_and_inner_passes(self):
+        from mousehair_app.effects import SlidingCrosshairEffect
+
+        class SlidingHost:
+            def __init__(self):
+                self.calls = []
+
+            def draw_animated_lines(
+                self,
+                painter,
+                mx,
+                my,
+                pen,
+            ):
+                self.calls.append(
+                    (painter, mx, my, pen)
+                )
+
+        host = SlidingHost()
+        effect = SlidingCrosshairEffect(host)
+
+        painter = object()
+        outer_pen = object()
+        inner_pen = object()
+
+        effect.render(
+            painter,
+            50,
+            75,
+            outer_pen,
+            inner_pen,
+        )
+
+        self.assertEqual(
+            host.calls,
+            [
+                (painter, 50, 75, outer_pen),
+                (painter, 50, 75, inner_pen),
+            ],
+        )
+
+    def test_sliding_effect_has_stable_name(self):
+        from mousehair_app.effects import SlidingCrosshairEffect
+
+        self.assertEqual(
+            SlidingCrosshairEffect.name,
+            "sliding",
+        )

@@ -2,7 +2,10 @@
 
 from PyQt5 import QtCore, QtGui
 
-from .effects import StaticCrosshairEffect
+from .effects import (
+    SlidingCrosshairEffect,
+    StaticCrosshairEffect,
+)
 
 
 class RenderPipelineMixin:
@@ -272,9 +275,14 @@ class RenderPipelineMixin:
         outer_pen,
         inner_pen,
     ):
-        """Render the segmented sliding-line animation."""
-        self.draw_animated_lines(painter, mx, my, outer_pen)
-        self.draw_animated_lines(painter, mx, my, inner_pen)
+        """Render the sliding crosshair through the Effects Engine."""
+        SlidingCrosshairEffect(self).render(
+            painter,
+            mx,
+            my,
+            outer_pen,
+            inner_pen,
+        )
 
     def _draw_arrow_crosshair(
         self,
