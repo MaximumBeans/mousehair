@@ -200,41 +200,83 @@ class SlidingEffectTests(unittest.TestCase):
         )
 
 
+class ArrowHost:
+    """Minimal host supplying arrow-renderer settings."""
+
+    gap = 20
+
+    outer_color = "#000000"
+    inner_color = "#FFFFFF"
+
+    current_alpha = 1.0
+
+    outer_thickness = 12
+    inner_thickness = 4
+
+    arrow_length = 12
+    arrow_width = 10
+    arrow_spacing = 30
+    arrow_first_offset = 0
+
+    arrow_border_over_line = False
+
+    def width(self):
+        return 200
+
+    def height(self):
+        return 160
+
+
+class FakeArrowPainter:
+    """Painter stub implementing the operations used by the arrow effect."""
+
+    def __init__(self):
+        self.lines = []
+        self.polygons = []
+
+    def save(self):
+        pass
+
+    def restore(self):
+        pass
+
+    def setPen(self, pen):
+        self.pen = pen
+
+    def setBrush(self, brush):
+        self.brush = brush
+
+    def drawLine(self, *args):
+        self.lines.append(args)
+
+    def drawPolygon(self, polygon):
+        self.polygons.append(polygon)
+
+
 class ArrowEffectTests(unittest.TestCase):
 
-    def test_arrow_effect_delegates_to_arrow_renderer(self):
-        class ArrowHost:
-            def __init__(self):
-                self.calls = []
-
-            def draw_arrow_lines(
-                self,
-                painter,
-                mx,
-                my,
-            ):
-                self.calls.append(
-                    (painter, mx, my)
-                )
-
+    def test_arrow_effect_draws_lines_and_arrowheads(self):
         host = ArrowHost()
         effect = ArrowCrosshairEffect(host)
 
-        painter = object()
+        painter = FakeArrowPainter()
 
         effect.render(
             painter,
-            120,
-            240,
+            100,
+            80,
             object(),
             object(),
         )
 
-        self.assertEqual(
-            host.calls,
-            [
-                (painter, 120, 240),
-            ],
+        self.assertGreater(
+            len(painter.lines),
+            0,
+        )
+
+        self.assertGreater(
+            len(painter.polygons),
+            0,
         )
 
     def test_arrow_effect_has_stable_name(self):
