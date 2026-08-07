@@ -226,11 +226,13 @@ class RenderPipelineMixin:
         if self.magnifier_enabled:
             return
 
-        diameter = float(self.gap * 2)
+        geometry = self._reticle_geometry()
+        radius = geometry.ring_centreline_radius
+        diameter = geometry.ring_centreline_diameter
 
         ring_rect = QtCore.QRectF(
-            float(mx) - float(self.gap),
-            float(my) - float(self.gap),
+            float(mx) - radius,
+            float(my) - radius,
             diameter,
             diameter,
         )

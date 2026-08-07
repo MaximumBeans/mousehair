@@ -284,11 +284,13 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         return self._reticle_geometry().cinnamon_lens_radius
 
     def _sync_cinnamon_ring_style(self):
-        """Send the visible ring appearance to the Cinnamon extension."""
+        """Send shared reticle geometry and colours to Cinnamon."""
+        geometry = self._reticle_geometry()
+
         self.cinnamon_lens.set_ring_style(
-            radius=float(self.gap),
-            outer_thickness=float(self.outer_thickness),
-            inner_thickness=float(self.inner_thickness),
+            radius=geometry.ring_centreline_radius,
+            outer_thickness=geometry.outer_thickness,
+            inner_thickness=geometry.inner_thickness,
             outer_colour=self.outer_color,
             inner_colour=self.inner_color,
         )
