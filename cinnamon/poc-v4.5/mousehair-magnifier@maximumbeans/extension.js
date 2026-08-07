@@ -803,47 +803,76 @@ class MousehairMagnifierProof {
 
     _setGeometry(gap, magnification) {
         /*
-         * Mousehair's PyQt ring is drawn at radius ``gap``. The compositor lens
-         * therefore needs a diameter of ``gap * 2`` to remain aligned with it.
+         * Apply geometry only when it has genuinely changed.
+         *
+         * SynchroniseState() is deliberately sent periodically so Mousehair can
+         * recover after Cinnamon restarts. Rebuilding every strip for an
+         * identical heartbeat snapshot would destroy correctly positioned
+         * clones and leave their replacements unpositioned until the mouse next
+         * moves.
          */
         const requestedGap = Number(gap);
         const requestedMagnification = Number(magnification);
+
+        let geometryChanged = false;
 
         if (
             Number.isFinite(requestedGap) &&
             requestedGap > 0
         ) {
-            this._gap = requestedGap;
-            this._lensSize = Math.max(
+            const newGap = requestedGap;
+            const newLensSize = Math.max(
                 2,
-                Math.round(requestedGap * 2)
+                Math.round(newGap * 2)
             );
+
+            if (
+                newGap !== this._gap ||
+                newLensSize !== this._lensSize
+            ) {
+                this._gap = newGap;
+                this._lensSize = newLensSize;
+                geometryChanged = true;
+            }
         }
 
         if (
             Number.isFinite(requestedMagnification) &&
             requestedMagnification >= 1.0
         ) {
-            this._magnification = requestedMagnification;
+            if (
+                requestedMagnification !==
+                this._magnification
+            ) {
+                this._magnification =
+                    requestedMagnification;
+
+                geometryChanged = true;
+            }
         }
 
-        if (this._lensActor) {
+        if (
+            geometryChanged &&
+            this._lensActor
+        ) {
             this._lensActor.set_size(
                 this._lensSize,
                 this._lensSize
             );
 
             /*
-             * Circle chords depend on the diameter, so Gap changes require a
-             * fresh strip layout rather than merely resizing the container.
+             * Both diameter and magnification affect the strip arrangement.
              */
             this._rebuildMagnifiedStrips();
+
+            /*
+             * Force _updateLens() to position every newly created clone even
+             * when the physical pointer has remained stationary.
+             */
+            this._lastLensPointerX = null;
+            this._lastLensPointerY = null;
         }
 
-        /*
-         * Recalculate the actor and clone positions immediately rather than
-         * waiting for the next normal 16 ms compositor update.
-         */
         this._updateLens();
         this._refreshVisibility();
     }
