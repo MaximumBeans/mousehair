@@ -3,6 +3,7 @@
 from PyQt5 import QtCore, QtGui
 
 from .effects import (
+    ArrowCrosshairEffect,
     SlidingCrosshairEffect,
     StaticCrosshairEffect,
 )
@@ -292,11 +293,14 @@ class RenderPipelineMixin:
         outer_pen,
         inner_pen,
     ):
-        """Render the inward-pointing outlined-arrow style."""
-        del outer_pen
-        del inner_pen
-
-        self.draw_arrow_lines(painter, mx, my)
+        """Render direction arrows through the Effects Engine."""
+        ArrowCrosshairEffect(self).render(
+            painter,
+            mx,
+            my,
+            outer_pen,
+            inner_pen,
+        )
 
     def _crosshair_renderer_name(self):
         """Return the renderer selected by the current settings."""

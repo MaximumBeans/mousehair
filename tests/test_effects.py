@@ -110,3 +110,51 @@ class SlidingEffectTests(unittest.TestCase):
             SlidingCrosshairEffect.name,
             "sliding",
         )
+
+
+class ArrowEffectTests(unittest.TestCase):
+
+    def test_arrow_effect_delegates_to_arrow_renderer(self):
+        from mousehair_app.effects import ArrowCrosshairEffect
+
+        class ArrowHost:
+            def __init__(self):
+                self.calls = []
+
+            def draw_arrow_lines(
+                self,
+                painter,
+                mx,
+                my,
+            ):
+                self.calls.append(
+                    (painter, mx, my)
+                )
+
+        host = ArrowHost()
+        effect = ArrowCrosshairEffect(host)
+
+        painter = object()
+
+        effect.render(
+            painter,
+            120,
+            240,
+            object(),
+            object(),
+        )
+
+        self.assertEqual(
+            host.calls,
+            [
+                (painter, 120, 240),
+            ],
+        )
+
+    def test_arrow_effect_has_stable_name(self):
+        from mousehair_app.effects import ArrowCrosshairEffect
+
+        self.assertEqual(
+            ArrowCrosshairEffect.name,
+            "arrows",
+        )
