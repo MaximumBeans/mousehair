@@ -8,6 +8,47 @@ class StaticCrosshairEffect(CrosshairEffect):
 
     name = "static"
 
+    def _draw_lines(
+        self,
+        painter,
+        mx,
+        my,
+        pen,
+    ):
+        """Draw one colour pass of the four crosshair arms."""
+        host = self.host
+        gap = host.gap
+
+        painter.setPen(pen)
+
+        painter.drawLine(
+            0,
+            my,
+            max(0, mx - gap),
+            my,
+        )
+
+        painter.drawLine(
+            mx + gap,
+            my,
+            host.width(),
+            my,
+        )
+
+        painter.drawLine(
+            mx,
+            0,
+            mx,
+            max(0, my - gap),
+        )
+
+        painter.drawLine(
+            mx,
+            my + gap,
+            mx,
+            host.height(),
+        )
+
     def render(
         self,
         painter,
@@ -16,15 +57,15 @@ class StaticCrosshairEffect(CrosshairEffect):
         outer_pen,
         inner_pen,
     ):
-        """Draw both passes of the classic Mousehair crosshair."""
-        self.host.draw_static_lines(
+        """Draw the broad outer pass, then the narrow inner pass."""
+        self._draw_lines(
             painter,
             mx,
             my,
             outer_pen,
         )
 
-        self.host.draw_static_lines(
+        self._draw_lines(
             painter,
             mx,
             my,

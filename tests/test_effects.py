@@ -2,51 +2,109 @@
 
 import unittest
 
-from mousehair_app.effects import StaticCrosshairEffect
+from mousehair_app.effects import (
+    ArrowCrosshairEffect,
+    SlidingCrosshairEffect,
+    StaticCrosshairEffect,
+)
 
 
-class DummyHost:
-    """Capture drawing requests made by an effect."""
+class FakePainter:
+    """Minimal painter that records line drawing operations."""
 
     def __init__(self):
-        self.calls = []
+        self.pen = None
+        self.lines = []
 
-    def draw_static_lines(
-        self,
-        painter,
-        mx,
-        my,
-        pen,
-    ):
-        self.calls.append(
-            (painter, mx, my, pen)
+    def setPen(self, pen):
+        self.pen = pen
+
+    def drawLine(self, *args):
+        self.lines.append(
+            (self.pen, args)
         )
+
+
+class StaticHost:
+    """Minimal host supplying the dimensions required by Static."""
+
+    gap = 20
+
+    def width(self):
+        return 800
+
+    def height(self):
+        return 600
 
 
 class StaticEffectTests(unittest.TestCase):
 
-    def test_static_effect_draws_outer_and_inner_passes(self):
-        host = DummyHost()
+    def test_static_effect_draws_four_arms_twice(self):
+        host = StaticHost()
         effect = StaticCrosshairEffect(host)
 
-        painter = object()
-        outer_pen = object()
-        inner_pen = object()
+        painter = FakePainter()
 
         effect.render(
             painter,
-            100,
-            200,
-            outer_pen,
-            inner_pen,
+            400,
+            300,
+            "outer",
+            "inner",
         )
 
         self.assertEqual(
-            host.calls,
-            [
-                (painter, 100, 200, outer_pen),
-                (painter, 100, 200, inner_pen),
-            ],
+            len(painter.lines),
+            8,
+        )
+
+        self.assertEqual(
+            [entry[0] for entry in painter.lines[:4]],
+            ["outer"] * 4,
+        )
+
+        self.assertEqual(
+            [entry[0] for entry in painter.lines[4:]],
+            ["inner"] * 4,
+        )
+
+    def test_static_effect_respects_gap(self):
+        host = StaticHost()
+        effect = StaticCrosshairEffect(host)
+
+        painter = FakePainter()
+
+        effect.render(
+            painter,
+            400,
+            300,
+            "outer",
+            "inner",
+        )
+
+        outer_lines = [
+            args
+            for pen, args in painter.lines[:4]
+        ]
+
+        self.assertIn(
+            (0, 300, 380, 300),
+            outer_lines,
+        )
+
+        self.assertIn(
+            (420, 300, 800, 300),
+            outer_lines,
+        )
+
+        self.assertIn(
+            (400, 0, 400, 280),
+            outer_lines,
+        )
+
+        self.assertIn(
+            (400, 320, 400, 600),
+            outer_lines,
         )
 
     def test_static_effect_has_stable_name(self):
@@ -56,15 +114,9 @@ class StaticEffectTests(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class SlidingEffectTests(unittest.TestCase):
 
     def test_sliding_effect_draws_outer_and_inner_passes(self):
-        from mousehair_app.effects import SlidingCrosshairEffect
-
         class SlidingHost:
             def __init__(self):
                 self.calls = []
@@ -104,8 +156,6 @@ class SlidingEffectTests(unittest.TestCase):
         )
 
     def test_sliding_effect_has_stable_name(self):
-        from mousehair_app.effects import SlidingCrosshairEffect
-
         self.assertEqual(
             SlidingCrosshairEffect.name,
             "sliding",
@@ -115,8 +165,6 @@ class SlidingEffectTests(unittest.TestCase):
 class ArrowEffectTests(unittest.TestCase):
 
     def test_arrow_effect_delegates_to_arrow_renderer(self):
-        from mousehair_app.effects import ArrowCrosshairEffect
-
         class ArrowHost:
             def __init__(self):
                 self.calls = []
@@ -152,9 +200,11 @@ class ArrowEffectTests(unittest.TestCase):
         )
 
     def test_arrow_effect_has_stable_name(self):
-        from mousehair_app.effects import ArrowCrosshairEffect
-
         self.assertEqual(
             ArrowCrosshairEffect.name,
             "arrows",
         )
+
+
+if __name__ == "__main__":
+    unittest.main()

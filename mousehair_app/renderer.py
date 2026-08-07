@@ -12,13 +12,6 @@ from .effects import (
 class RenderPipelineMixin:
     """Drawing methods mixed into the main overlay widget."""
 
-    def draw_static_lines(self, painter, mx, my, pen):
-        painter.setPen(pen)
-        painter.drawLine(0, my, max(0, mx - self.gap), my)
-        painter.drawLine(mx + self.gap, my, self.width(), my)
-        painter.drawLine(mx, 0, mx, max(0, my - self.gap))
-        painter.drawLine(mx, my + self.gap, mx, self.height())
-
     def draw_animated_segment_line(self, painter, start_x, start_y, end_x, end_y, toward_mouse_sign):
         dx = end_x - start_x
         dy = end_y - start_y
