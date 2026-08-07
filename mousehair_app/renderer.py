@@ -245,29 +245,78 @@ class RenderPipelineMixin:
         painter.setPen(inner_pen)
         painter.drawEllipse(ring_rect)
 
-    def draw_crosshair(self, painter, mx, my, outer_pen, inner_pen):
-        """Draw the currently selected crosshair style.
-
-        Keeping the style-selection logic in one method prevents paintEvent()
-        from becoming a long chain of effect-specific conditions as more
-        rendering styles are added.
-        """
-        if not self.animate_enabled:
-            self.draw_static_lines(painter, mx, my, outer_pen)
-            self.draw_static_lines(painter, mx, my, inner_pen)
-            return
-
-        if self.animation_style == "sliding":
-            self.draw_animated_lines(painter, mx, my, outer_pen)
-            self.draw_animated_lines(painter, mx, my, inner_pen)
-            return
-
-        if self.animation_style == "arrows":
-            self.draw_arrow_lines(painter, mx, my)
-            return
-
-        # Fall back to the ordinary static crosshair if a configuration file
-        # contains an unknown or no-longer-supported animation style.
+    def _draw_static_crosshair(
+        self,
+        painter,
+        mx,
+        my,
+        outer_pen,
+        inner_pen,
+    ):
+        """Render the ordinary two-pass static crosshair."""
         self.draw_static_lines(painter, mx, my, outer_pen)
         self.draw_static_lines(painter, mx, my, inner_pen)
+
+    def _draw_sliding_crosshair(
+        self,
+        painter,
+        mx,
+        my,
+        outer_pen,
+        inner_pen,
+    ):
+        """Render the segmented sliding-line animation."""
+        self.draw_animated_lines(painter, mx, my, outer_pen)
+        self.draw_animated_lines(painter, mx, my, inner_pen)
+
+    def _draw_arrow_crosshair(
+        self,
+        painter,
+        mx,
+        my,
+        outer_pen,
+        inner_pen,
+    ):
+        """Render the inward-pointing outlined-arrow style."""
+        del outer_pen
+        del inner_pen
+
+        self.draw_arrow_lines(painter, mx, my)
+
+    def _crosshair_renderer_name(self):
+        """Return the renderer selected by the current settings."""
+        if not self.animate_enabled:
+            return "static"
+
+        return str(
+            self.animation_style or "static"
+        ).strip().lower()
+
+    def _crosshair_renderers(self):
+        """Return Mousehair's built-in crosshair renderer registry.
+
+        This is the first Effects Engine plug-in seam. The implementations
+        still live on RenderPipelineMixin for now, but selection no longer
+        requires an expanding chain of effect-specific conditions.
+        """
+        return {
+            "static": self._draw_static_crosshair,
+            "sliding": self._draw_sliding_crosshair,
+            "arrows": self._draw_arrow_crosshair,
+        }
+
+    def draw_crosshair(self, painter, mx, my, outer_pen, inner_pen):
+        """Dispatch the crosshair to the selected renderer."""
+        renderer = self._crosshair_renderers().get(
+            self._crosshair_renderer_name(),
+            self._draw_static_crosshair,
+        )
+
+        renderer(
+            painter,
+            mx,
+            my,
+            outer_pen,
+            inner_pen,
+        )
 
