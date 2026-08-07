@@ -2,6 +2,8 @@
 
 from PyQt5 import QtCore, QtGui
 
+from .effects import StaticCrosshairEffect
+
 
 class RenderPipelineMixin:
     """Drawing methods mixed into the main overlay widget."""
@@ -253,9 +255,14 @@ class RenderPipelineMixin:
         outer_pen,
         inner_pen,
     ):
-        """Render the ordinary two-pass static crosshair."""
-        self.draw_static_lines(painter, mx, my, outer_pen)
-        self.draw_static_lines(painter, mx, my, inner_pen)
+        """Render the classic crosshair through the Effects Engine."""
+        StaticCrosshairEffect(self).render(
+            painter,
+            mx,
+            my,
+            outer_pen,
+            inner_pen,
+        )
 
     def _draw_sliding_crosshair(
         self,
