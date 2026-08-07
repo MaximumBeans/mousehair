@@ -114,45 +114,83 @@ class StaticEffectTests(unittest.TestCase):
         )
 
 
+class SlidingHost:
+    """Minimal host supplying sliding-effect settings."""
+
+    gap = 20
+    animate_spacing = 20
+    animate_segment_length = 10
+    animation_phase = 0
+
+    def width(self):
+        return 200
+
+    def height(self):
+        return 160
+
+
 class SlidingEffectTests(unittest.TestCase):
 
-    def test_sliding_effect_draws_outer_and_inner_passes(self):
-        class SlidingHost:
-            def __init__(self):
-                self.calls = []
-
-            def draw_animated_lines(
-                self,
-                painter,
-                mx,
-                my,
-                pen,
-            ):
-                self.calls.append(
-                    (painter, mx, my, pen)
-                )
-
+    def test_sliding_effect_draws_segments_for_both_passes(self):
         host = SlidingHost()
         effect = SlidingCrosshairEffect(host)
 
-        painter = object()
-        outer_pen = object()
-        inner_pen = object()
+        painter = FakePainter()
 
         effect.render(
             painter,
-            50,
-            75,
-            outer_pen,
-            inner_pen,
+            100,
+            80,
+            "outer",
+            "inner",
         )
 
-        self.assertEqual(
-            host.calls,
-            [
-                (painter, 50, 75, outer_pen),
-                (painter, 50, 75, inner_pen),
-            ],
+        self.assertGreater(
+            len(painter.lines),
+            0,
+        )
+
+        pens = [
+            pen
+            for pen, _args in painter.lines
+        ]
+
+        self.assertIn(
+            "outer",
+            pens,
+        )
+
+        self.assertIn(
+            "inner",
+            pens,
+        )
+
+    def test_sliding_effect_respects_segment_length(self):
+        host = SlidingHost()
+        effect = SlidingCrosshairEffect(host)
+
+        painter = FakePainter()
+
+        effect.render(
+            painter,
+            100,
+            80,
+            "outer",
+            "inner",
+        )
+
+        first_line = painter.lines[0][1]
+
+        x1, y1, x2, y2 = first_line
+
+        length = (
+            (x2 - x1) ** 2
+            + (y2 - y1) ** 2
+        ) ** 0.5
+
+        self.assertLessEqual(
+            length,
+            host.animate_segment_length,
         )
 
     def test_sliding_effect_has_stable_name(self):

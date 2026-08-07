@@ -12,38 +12,6 @@ from .effects import (
 class RenderPipelineMixin:
     """Drawing methods mixed into the main overlay widget."""
 
-    def draw_animated_segment_line(self, painter, start_x, start_y, end_x, end_y, toward_mouse_sign):
-        dx = end_x - start_x
-        dy = end_y - start_y
-        length = int((dx * dx + dy * dy) ** 0.5)
-        if length <= 0:
-            return
-
-        unit_x = dx / length
-        unit_y = dy / length
-        spacing = max(1, self.animate_spacing)
-        segment_length = max(1, min(self.animate_segment_length, spacing))
-        phase = self.animation_phase % spacing
-
-        pos = phase - spacing
-        while pos < length:
-            seg_start = max(0, pos)
-            seg_end = min(length, pos + segment_length)
-            if seg_end > 0 and seg_start < length:
-                x1 = start_x + unit_x * seg_start
-                y1 = start_y + unit_y * seg_start
-                x2 = start_x + unit_x * seg_end
-                y2 = start_y + unit_y * seg_end
-                painter.drawLine(int(x1), int(y1), int(x2), int(y2))
-            pos += spacing
-
-    def draw_animated_lines(self, painter, mx, my, pen):
-        painter.setPen(pen)
-        self.draw_animated_segment_line(painter, 0, my, max(0, mx - self.gap), my, 1)
-        self.draw_animated_segment_line(painter, self.width(), my, min(self.width(), mx + self.gap), my, 1)
-        self.draw_animated_segment_line(painter, mx, 0, mx, max(0, my - self.gap), 1)
-        self.draw_animated_segment_line(painter, mx, self.height(), mx, min(self.height(), my + self.gap), 1)
-
     def draw_arrow_line(self, painter, start_x, start_y, end_x, end_y):
         """Draw one solid reticule arm with cursor-anchored outlined arrows."""
         dx = end_x - start_x
