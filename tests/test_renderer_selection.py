@@ -3,6 +3,11 @@
 import unittest
 
 from mousehair_app.renderer import RenderPipelineMixin
+from mousehair_app.effects import (
+    ArrowCrosshairEffect,
+    SlidingCrosshairEffect,
+    StaticCrosshairEffect,
+)
 
 
 class DummyRendererHost(RenderPipelineMixin):
@@ -57,6 +62,29 @@ class RendererSelectionTests(unittest.TestCase):
         self.assertEqual(
             host._crosshair_renderer_name(),
             "static",
+        )
+
+    def test_registry_maps_names_to_effect_classes(self):
+        host = DummyRendererHost(
+            animate_enabled=False,
+            animation_style=None,
+        )
+
+        registry = host._crosshair_renderers()
+
+        self.assertIs(
+            registry["static"],
+            StaticCrosshairEffect,
+        )
+
+        self.assertIs(
+            registry["sliding"],
+            SlidingCrosshairEffect,
+        )
+
+        self.assertIs(
+            registry["arrows"],
+            ArrowCrosshairEffect,
         )
 
     def test_registry_contains_existing_renderers(self):

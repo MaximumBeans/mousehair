@@ -79,57 +79,6 @@ class RenderPipelineMixin:
         painter.setPen(inner_pen)
         painter.drawEllipse(ring_rect)
 
-    def _draw_static_crosshair(
-        self,
-        painter,
-        mx,
-        my,
-        outer_pen,
-        inner_pen,
-    ):
-        """Render the classic crosshair through the Effects Engine."""
-        StaticCrosshairEffect(self).render(
-            painter,
-            mx,
-            my,
-            outer_pen,
-            inner_pen,
-        )
-
-    def _draw_sliding_crosshair(
-        self,
-        painter,
-        mx,
-        my,
-        outer_pen,
-        inner_pen,
-    ):
-        """Render the sliding crosshair through the Effects Engine."""
-        SlidingCrosshairEffect(self).render(
-            painter,
-            mx,
-            my,
-            outer_pen,
-            inner_pen,
-        )
-
-    def _draw_arrow_crosshair(
-        self,
-        painter,
-        mx,
-        my,
-        outer_pen,
-        inner_pen,
-    ):
-        """Render direction arrows through the Effects Engine."""
-        ArrowCrosshairEffect(self).render(
-            painter,
-            mx,
-            my,
-            outer_pen,
-            inner_pen,
-        )
-
     def _crosshair_renderer_name(self):
         """Return the renderer selected by the current settings."""
         if not self.animate_enabled:
@@ -140,26 +89,30 @@ class RenderPipelineMixin:
         ).strip().lower()
 
     def _crosshair_renderers(self):
-        """Return Mousehair's built-in crosshair renderer registry.
+        """Return Mousehair's built-in Effects Engine registry.
 
-        This is the first Effects Engine plug-in seam. The implementations
-        still live on RenderPipelineMixin for now, but selection no longer
-        requires an expanding chain of effect-specific conditions.
+        The registry maps stable effect names directly to effect classes.
+        RenderPipelineMixin therefore does not need effect-specific wrapper
+        methods and does not need to know how an individual effect draws.
         """
         return {
-            "static": self._draw_static_crosshair,
-            "sliding": self._draw_sliding_crosshair,
-            "arrows": self._draw_arrow_crosshair,
+            "static": StaticCrosshairEffect,
+            "sliding": SlidingCrosshairEffect,
+            "arrows": ArrowCrosshairEffect,
         }
 
     def draw_crosshair(self, painter, mx, my, outer_pen, inner_pen):
-        """Dispatch the crosshair to the selected renderer."""
-        renderer = self._crosshair_renderers().get(
+        """Instantiate and render the currently selected crosshair effect."""
+        effects = self._crosshair_renderers()
+
+        effect_class = effects.get(
             self._crosshair_renderer_name(),
-            self._draw_static_crosshair,
+            StaticCrosshairEffect,
         )
 
-        renderer(
+        effect = effect_class(self)
+
+        effect.render(
             painter,
             mx,
             my,
