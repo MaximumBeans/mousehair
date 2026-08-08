@@ -7,6 +7,8 @@ class StaticCrosshairEffect(CrosshairEffect):
     """Render the ordinary two-colour static crosshair."""
 
     name = "static"
+    display_name = "Static"
+    control_family = "none"
 
     def _draw_lines(
         self,

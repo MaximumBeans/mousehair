@@ -9,6 +9,8 @@ class ArrowCrosshairEffect(CrosshairEffect):
     """Render Mousehair's inward-pointing outlined arrow reticule."""
 
     name = "arrows"
+    display_name = "Direction arrows"
+    control_family = "arrows"
 
     def _draw_arrow_line(
         self,

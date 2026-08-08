@@ -563,8 +563,19 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         animate_chk = QtWidgets.QCheckBox("Enable crawling line animation")
         animate_chk.setChecked(self.animate_enabled)
         animation_style_combo = QtWidgets.QComboBox()
-        animation_style_combo.addItem("Sliding inward", "sliding")
-        animation_style_combo.addItem("Direction arrows", "arrows")
+
+        # Populate the selector from the Effects Engine instead of hard-coding
+        # effect names in the settings dialog. Static remains represented by
+        # the "Enable crawling line animation" checkbox for compatibility with
+        # existing configuration files.
+        for effect_class in self._crosshair_effect_classes():
+            if effect_class.name == "static":
+                continue
+
+            animation_style_combo.addItem(
+                effect_class.display_name,
+                effect_class.name,
+            )
 
         animation_style_index = animation_style_combo.findData(self.animation_style)
         if animation_style_index >= 0:
@@ -636,23 +647,63 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         layout.addRow(arrow_border_over_line_chk)
 
         def update_effect_controls():
-            arrows_selected = animation_style_combo.currentData() == "arrows"
-            animate_speed_spin.setVisible(not arrows_selected)
-            animate_spacing_spin.setVisible(not arrows_selected)
-            animate_segment_spin.setVisible(not arrows_selected)
-            layout.labelForField(animate_speed_spin).setVisible(not arrows_selected)
-            layout.labelForField(animate_spacing_spin).setVisible(not arrows_selected)
-            layout.labelForField(animate_segment_spin).setVisible(not arrows_selected)
+            effect_name = animation_style_combo.currentData()
 
-            arrow_first_spin.setVisible(arrows_selected)
-            arrow_spacing_spin.setVisible(arrows_selected)
-            arrow_length_spin.setVisible(arrows_selected)
-            arrow_width_spin.setVisible(arrows_selected)
-            arrow_border_over_line_chk.setVisible(arrows_selected)
-            layout.labelForField(arrow_first_spin).setVisible(arrows_selected)
-            layout.labelForField(arrow_spacing_spin).setVisible(arrows_selected)
-            layout.labelForField(arrow_length_spin).setVisible(arrows_selected)
-            layout.labelForField(arrow_width_spin).setVisible(arrows_selected)
+            effect_class = self._crosshair_renderers().get(
+                effect_name
+            )
+
+            control_family = (
+                effect_class.control_family
+                if effect_class is not None
+                else "none"
+            )
+
+            segment_controls = (
+                control_family == "segments"
+            )
+
+            arrow_controls = (
+                control_family == "arrows"
+            )
+
+            animate_speed_spin.setVisible(segment_controls)
+            animate_spacing_spin.setVisible(segment_controls)
+            animate_segment_spin.setVisible(segment_controls)
+
+            layout.labelForField(
+                animate_speed_spin
+            ).setVisible(segment_controls)
+
+            layout.labelForField(
+                animate_spacing_spin
+            ).setVisible(segment_controls)
+
+            layout.labelForField(
+                animate_segment_spin
+            ).setVisible(segment_controls)
+
+            arrow_first_spin.setVisible(arrow_controls)
+            arrow_spacing_spin.setVisible(arrow_controls)
+            arrow_length_spin.setVisible(arrow_controls)
+            arrow_width_spin.setVisible(arrow_controls)
+            arrow_border_over_line_chk.setVisible(arrow_controls)
+
+            layout.labelForField(
+                arrow_first_spin
+            ).setVisible(arrow_controls)
+
+            layout.labelForField(
+                arrow_spacing_spin
+            ).setVisible(arrow_controls)
+
+            layout.labelForField(
+                arrow_length_spin
+            ).setVisible(arrow_controls)
+
+            layout.labelForField(
+                arrow_width_spin
+            ).setVisible(arrow_controls)
 
         animation_style_combo.currentIndexChanged.connect(update_effect_controls)
         update_effect_controls()

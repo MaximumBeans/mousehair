@@ -288,3 +288,36 @@ class ArrowEffectTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EffectMetadataTests(unittest.TestCase):
+
+    def test_static_metadata(self):
+        self.assertEqual(
+            StaticCrosshairEffect.display_name,
+            "Static",
+        )
+        self.assertEqual(
+            StaticCrosshairEffect.control_family,
+            "none",
+        )
+
+    def test_sliding_metadata(self):
+        self.assertEqual(
+            SlidingCrosshairEffect.display_name,
+            "Sliding inward",
+        )
+        self.assertEqual(
+            SlidingCrosshairEffect.control_family,
+            "segments",
+        )
+
+    def test_arrow_metadata(self):
+        self.assertEqual(
+            ArrowCrosshairEffect.display_name,
+            "Direction arrows",
+        )
+        self.assertEqual(
+            ArrowCrosshairEffect.control_family,
+            "arrows",
+        )

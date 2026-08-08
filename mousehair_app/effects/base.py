@@ -2,15 +2,14 @@
 
 
 class CrosshairEffect:
-    """Base class for a crosshair rendering effect.
-
-    Effects deliberately receive their host overlay rather than owning global
-    application state themselves. This keeps effects concerned only with
-    drawing while Mousehair continues to own settings, timers, fading,
-    magnification, and Cinnamon integration.
-    """
+    """Base class for a Mousehair crosshair rendering effect."""
 
     name = "base"
+    display_name = "Base effect"
+
+    # Settings UI grouping. Existing controls currently fall into either the
+    # segmented-animation family or the arrow family.
+    control_family = "none"
 
     def __init__(self, host):
         self.host = host
@@ -23,8 +22,5 @@ class CrosshairEffect:
         outer_pen,
         inner_pen,
     ):
-        """Render this effect.
-
-        Subclasses must implement this method.
-        """
+        """Render this effect."""
         raise NotImplementedError

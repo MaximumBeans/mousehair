@@ -89,17 +89,19 @@ class RenderPipelineMixin:
         ).strip().lower()
 
     def _crosshair_renderers(self):
-        """Return Mousehair's built-in Effects Engine registry.
-
-        The registry maps stable effect names directly to effect classes.
-        RenderPipelineMixin therefore does not need effect-specific wrapper
-        methods and does not need to know how an individual effect draws.
-        """
+        """Return Mousehair's built-in Effects Engine registry."""
         return {
-            "static": StaticCrosshairEffect,
-            "sliding": SlidingCrosshairEffect,
-            "arrows": ArrowCrosshairEffect,
+            effect_class.name: effect_class
+            for effect_class in self._crosshair_effect_classes()
         }
+
+    def _crosshair_effect_classes(self):
+        """Return built-in effects in their preferred UI order."""
+        return (
+            StaticCrosshairEffect,
+            SlidingCrosshairEffect,
+            ArrowCrosshairEffect,
+        )
 
     def draw_crosshair(self, painter, mx, my, outer_pen, inner_pen):
         """Instantiate and render the currently selected crosshair effect."""

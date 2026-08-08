@@ -7,6 +7,8 @@ class SlidingCrosshairEffect(CrosshairEffect):
     """Render the inward-moving segmented crosshair."""
 
     name = "sliding"
+    display_name = "Sliding inward"
+    control_family = "segments"
 
     def _draw_segment_line(
         self,
