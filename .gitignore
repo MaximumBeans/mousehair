@@ -1,24 +1,31 @@
-# Python bytecode and caches
+# Python-generated cache files
 __pycache__/
 *.py[cod]
-*$py.class
 
-# Virtual environments
-.venv/
-venv/
-env/
+# Local guarded-updater scripts
+tools/
 
-# Editor settings
-.vscode/
-.idea/
+# Local patches and experiments
+patches/
 
-# Local configuration and temporary files
-*.log
-*.tmp
-*.swp
+# Automatic source backups
+mousehair.py.before-*
+
+# Local inspection and diagnostic output
+*-inspection.txt
+*-repair.txt
+git-config.txt
+
+# Editor backup files
 *~
 
-# Packaging output
-build/
-dist/
-*.egg-info/
+# Local diagnostic output, may contain private screen captures
+/tools/output/
+
+# Local Cinnamon-extension build and diagnostic output
+/cinnamon/**/output/
+/cinnamon/**/*.zip
+/cinnamon/**/*.tar
+/cinnamon/**/*.tar.gz
+
+/tools/output/

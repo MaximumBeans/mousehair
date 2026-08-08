@@ -2,40 +2,170 @@
 import sys
 import json
 import os
+import signal
+import subprocess
 from PyQt5 import QtWidgets, QtGui, QtCore
-from Xlib import X, XK, display
+from Xlib import X, XK, display, error
+from mousehair_app import (
+    CinnamonLensBridge,
+    CompositeCapture,
+    RenderPipelineMixin,
+    ReticleGeometry,
+)
+
+from mousehair_app.complications import (
+    ComplicationManager,
+)
 
 CONFIG_PATH = os.path.expanduser('~/.config/mousehair/config.json')
 
 class GlobalHotkey(QtCore.QObject):
+    """Register and receive Mousehair's global X11 keyboard shortcut."""
+
     activated = QtCore.pyqtSignal()
 
-    def __init__(self):
-        super().__init__()
+    MODIFIER_MASKS = {
+        "SHIFT": X.ShiftMask,
+        "CTRL": X.ControlMask,
+        "CONTROL": X.ControlMask,
+        "ALT": X.Mod1Mask,
+        "SUPER": X.Mod4Mask,
+        "META": X.Mod4Mask,
+    }
+
+    def __init__(self, key="M", modifiers=None, parent=None):
+        super().__init__(parent)
+
         self.dpy = display.Display()
         self.root = self.dpy.screen().root
-        self.root.change_attributes(event_mask=X.KeyPressMask)
 
-        self.keycode = self.dpy.keysym_to_keycode(XK.string_to_keysym('M'))
-        self.modifiers = X.Mod4Mask | X.ShiftMask
+        self.key_name = str(key or "M").upper()
+        self.modifier_names = list(modifiers or ["SUPER", "SHIFT"])
 
-        for mod in [self.modifiers, self.modifiers | X.LockMask, self.modifiers | X.Mod2Mask, self.modifiers | X.LockMask | X.Mod2Mask]:
-            self.root.grab_key(self.keycode, mod, True, X.GrabModeAsync, X.GrabModeAsync)
+        keysym = XK.string_to_keysym(self.key_name.lower())
+        self.keycode = self.dpy.keysym_to_keycode(keysym)
 
-        self.notifier = QtCore.QSocketNotifier(self.dpy.fileno(), QtCore.QSocketNotifier.Read)
-        self.notifier.activated.connect(self.process_events)
+        if not self.keycode:
+            raise RuntimeError(
+                f"Mousehair could not resolve hotkey key {self.key_name!r}."
+            )
+
+        self.modifiers = 0
+        for name in self.modifier_names:
+            mask = self.MODIFIER_MASKS.get(str(name).upper())
+            if mask is not None:
+                self.modifiers |= mask
+
+        self._grabbed_masks = []
+        self._register_grabs()
+
+        # QSocketNotifier proved unreliable for this passive X11 key grab on
+        # Cinnamon. A lightweight Qt timer keeps all event processing inside
+        # the ordinary Qt event loop instead.
+        #
+        # Ten milliseconds is quick enough for the shortcut to feel immediate
+        # while remaining negligible compared with Mousehair's 16 ms drawing
+        # and fade timers.
+        self.event_timer = QtCore.QTimer(self)
+        self.event_timer.setInterval(10)
+        self.event_timer.timeout.connect(self.process_events)
+        self.event_timer.start()
+
+    def _register_grabs(self):
+        """Grab the shortcut with common lock-key combinations ignored.
+
+        Caps Lock, Num Lock, and Scroll Lock can appear as extra modifier bits
+        in X11 key events. Registering each combination keeps the shortcut
+        working regardless of those lock states.
+        """
+        ignored_locks = [
+            X.LockMask,
+            X.Mod2Mask,
+            X.Mod5Mask,
+        ]
+
+        lock_combinations = {0}
+        for lock_mask in ignored_locks:
+            lock_combinations |= {
+                existing | lock_mask
+                for existing in tuple(lock_combinations)
+            }
+
+        failed_masks = []
+
+        for lock_mask in sorted(lock_combinations):
+            grab_mask = self.modifiers | lock_mask
+            catcher = error.CatchError(error.BadAccess)
+
+            self.root.grab_key(
+                self.keycode,
+                grab_mask,
+                False,
+                X.GrabModeAsync,
+                X.GrabModeAsync,
+                onerror=catcher,
+            )
+            self.dpy.sync()
+
+            if catcher.get_error() is None:
+                self._grabbed_masks.append(grab_mask)
+            else:
+                failed_masks.append(grab_mask)
+
+        if not self._grabbed_masks:
+            shortcut = "+".join(
+                [*self.modifier_names, self.key_name]
+            )
+            raise RuntimeError(
+                f"Mousehair could not register {shortcut}. "
+                "Another application or Cinnamon shortcut is already using it."
+            )
+
+        if failed_masks:
+            print(
+                "Mousehair warning: some lock-state variants of the global "
+                "hotkey could not be registered.",
+                file=sys.stderr,
+            )
 
     def process_events(self):
+        """Drain pending X11 events and emit the shortcut activation signal."""
         while self.dpy.pending_events():
             event = self.dpy.next_event()
-            if event.type == X.KeyPress and event.detail == self.keycode:
-                self.activated.emit()
-                self.dpy.allow_events(X.AsyncKeyboard, event.time)
 
-class MousehairOverlay(QtWidgets.QWidget):
+            if (
+                event.type == X.KeyPress
+                and event.detail == self.keycode
+            ):
+                self.activated.emit()
+
+    def close(self):
+        """Release every passive key grab owned by this object."""
+        if self.event_timer.isActive():
+            self.event_timer.stop()
+
+        for grab_mask in self._grabbed_masks:
+            self.root.ungrab_key(self.keycode, grab_mask)
+
+        self._grabbed_masks.clear()
+        self.dpy.sync()
+
+class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
+    # Unix signals cannot directly manipulate Qt widgets safely in a
+    # portable way. This Qt signal carries the request into the normal
+    # application event loop before visibility is changed.
+    toggle_requested = QtCore.pyqtSignal()
+
     def __init__(self):
         super().__init__()
         self.load_settings()
+
+        # Complications are persistent runtime objects. Timer state therefore
+        # survives ordinary repaint cycles rather than being recreated every
+        # frame.
+        self.complications = ComplicationManager(
+            self
+        )
 
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint |
@@ -59,18 +189,73 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.fade_timer = QtCore.QTimer()
         self.fade_timer.timeout.connect(self.update_fade)
         self.fade_timer.start(16)
+
+        # Keep the Cinnamon compositor extension tied to this application's
+        # lifecycle. If Mousehair disappears, the extension watchdog hides the
+        # lens and ring after roughly 2.5 seconds.
+
+        self.cinnamon_heartbeat_timer = QtCore.QTimer(self)
+        self.cinnamon_heartbeat_timer.setInterval(1000)
+        self.cinnamon_heartbeat_timer.timeout.connect(
+            self._send_cinnamon_heartbeat
+        )
+
+        self.capture_provider = CompositeCapture()
+
+        # The Cinnamon extension renders the compositor-native lens.
+        # Mousehair supplies its effective opacity and visibility state.
+        self.cinnamon_lens = CinnamonLensBridge(self)
+
         self.last_mouse_pos = QtGui.QCursor.pos()
         self.last_move_time = QtCore.QElapsedTimer()
         self.last_move_time.start()
 
         self.visible = True
 
-        self.hotkey = GlobalHotkey()
-        self.hotkey.activated.connect(self.toggle_visibility)
+        # Cinnamon owns Super-key combinations and proved unreliable when
+        # Mousehair attempted to grab this shortcut directly through X11.
+        #
+        # The Cinnamon extension now registers Super+Shift+M natively and sends
+        # SIGUSR1 to this process. The Python signal handler emits a Qt signal,
+        # keeping the actual widget operation inside Qt's event loop.
+        self.toggle_requested.connect(self.toggle_visibility)
+        signal.signal(signal.SIGUSR1, self._handle_toggle_signal)
 
         self.tray_menu = QtWidgets.QMenu()
         self.toggle_action = self.tray_menu.addAction("Disable Mousehair")
         self.toggle_action.triggered.connect(self.toggle_visibility)
+        pomodoro_menu = self.tray_menu.addMenu(
+            "Pomodoro"
+        )
+
+        pomodoro_start_action = pomodoro_menu.addAction(
+            "Start / Resume"
+        )
+        pomodoro_start_action.triggered.connect(
+            self.complications.pomodoro.start
+        )
+
+        pomodoro_pause_action = pomodoro_menu.addAction(
+            "Pause"
+        )
+        pomodoro_pause_action.triggered.connect(
+            self.complications.pomodoro.pause
+        )
+
+        pomodoro_reset_action = pomodoro_menu.addAction(
+            "Reset"
+        )
+        pomodoro_reset_action.triggered.connect(
+            self.complications.pomodoro.reset
+        )
+
+        pomodoro_skip_action = pomodoro_menu.addAction(
+            "Skip phase"
+        )
+        pomodoro_skip_action.triggered.connect(
+            self.complications.pomodoro.skip
+        )
+
         settings_action = self.tray_menu.addAction("Settings")
         settings_action.triggered.connect(self.show_settings_dialog)
         quit_action = self.tray_menu.addAction("Quit")
@@ -83,6 +268,59 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.tray.setContextMenu(self.tray_menu)
         self.tray.show()
 
+        QtWidgets.qApp.aboutToQuit.connect(self.cinnamon_lens.shutdown)
+
+        # The Cinnamon extension cannot infer later settings changes merely
+        # from the opacity stream. Send its initial viewport dimensions and
+        # zoom factor explicitly.
+        self.cinnamon_lens.set_geometry(
+            self._cinnamon_lens_radius(),
+            self.magnification,
+        )
+        self._sync_cinnamon_ring_style()
+        self._send_cinnamon_heartbeat()
+        self.cinnamon_heartbeat_timer.start()
+        self._sync_cinnamon_lens(force=True)
+
+    def _send_cinnamon_heartbeat(self):
+        """Refresh Cinnamon with Mousehair's complete current state.
+
+        The timer doubles as a self-healing synchronisation mechanism. If
+        Cinnamon has restarted since the previous tick, the freshly loaded
+        extension receives enough state to rebuild the ring and lens without
+        requiring Mousehair to restart.
+        """
+        geometry = self._reticle_geometry()
+
+        self.cinnamon_lens.synchronise_state(
+            lens_radius=geometry.cinnamon_lens_radius,
+            magnification=self.magnification,
+            ring_radius=geometry.ring_centreline_radius,
+            outer_thickness=geometry.outer_thickness,
+            inner_thickness=geometry.inner_thickness,
+            outer_colour=self.outer_color,
+            inner_colour=self.inner_color,
+            opacity=self._cinnamon_lens_opacity(),
+        )
+
+        pomodoro = self.complications.pomodoro
+        pomodoro.update()
+        pomodoro_snapshot = pomodoro.snapshot()
+
+        self.cinnamon_lens.set_pomodoro_state(
+            enabled=(
+                self.pomodoro_enabled
+                and self.magnifier_enabled
+            ),
+            progress=pomodoro_snapshot.progress,
+            ring_thickness=self.pomodoro_ring_thickness,
+            icon_size=self.pomodoro_icon_size,
+        )
+
+    def _handle_toggle_signal(self, _signal_number, _stack_frame):
+        """Receive the Cinnamon extension's SIGUSR1 toggle request."""
+        self.toggle_requested.emit()
+
     def toggle_visibility(self):
         self.visible = not self.visible
         if self.visible:
@@ -91,6 +329,53 @@ class MousehairOverlay(QtWidgets.QWidget):
         else:
             self.hide()
             self.toggle_action.setText("Enable Mousehair")
+
+        self._sync_cinnamon_lens(force=True)
+
+    def _cinnamon_lens_opacity(self):
+        """Return the compositor lens opacity implied by Mousehair's state."""
+        if not self.visible:
+            return 0.0
+
+        if not self.ring_enabled or not self.magnifier_enabled:
+            return 0.0
+
+        return self.current_alpha
+
+    def _reticle_geometry(self):
+        """Return the shared geometry derived from current settings."""
+        return ReticleGeometry.from_values(
+            gap=self.gap,
+            outer_thickness=self.outer_thickness,
+            inner_thickness=self.inner_thickness,
+        )
+
+    def _ring_radius(self):
+        """Return the common centreline radius for both visible ring strokes."""
+        return self._reticle_geometry().ring_centreline_radius
+
+    def _cinnamon_lens_radius(self):
+        """Return the clear radius available inside the complete ring."""
+        return self._reticle_geometry().cinnamon_lens_radius
+
+    def _sync_cinnamon_ring_style(self):
+        """Send shared reticle geometry and colours to Cinnamon."""
+        geometry = self._reticle_geometry()
+
+        self.cinnamon_lens.set_ring_style(
+            radius=geometry.ring_centreline_radius,
+            outer_thickness=geometry.outer_thickness,
+            inner_thickness=geometry.inner_thickness,
+            outer_colour=self.outer_color,
+            inner_colour=self.inner_color,
+        )
+
+    def _sync_cinnamon_lens(self, force=False):
+        """Forward Mousehair's effective opacity to the Cinnamon extension."""
+        self.cinnamon_lens.set_opacity(
+            self._cinnamon_lens_opacity(),
+            force=force,
+        )
 
     def load_settings(self):
         defaults = {
@@ -107,11 +392,31 @@ class MousehairOverlay(QtWidgets.QWidget):
             'fade_out_delay': 500,
             'fade_in_delay': 0,
             'fade_duration': 300,
+            # ``crosshair_effect`` is the canonical Effects Engine
+            # setting. The two older animation fields are retained so old
+            # configuration files can still be interpreted correctly.
+            'crosshair_effect': 'static',
             'animate_enabled': False,
             'animation_style': 'sliding',
             'animate_speed': 180,
             'animate_spacing': 32,
-            'animate_segment_length': 14
+            'animate_segment_length': 14,
+            'pulse_strength': 0.15,
+            'pulse_period': 1.5,
+            'arrow_first_offset': 20,
+            'arrow_spacing': 40,
+            'arrow_length': 14,
+            'arrow_width': 12,
+            'arrow_border_over_line': True,
+            'ring_enabled': False,
+            'magnifier_enabled': False,
+            'magnification': 2.0,
+            'pomodoro_enabled': True,
+            'pomodoro_focus_minutes': 25,
+            'pomodoro_break_minutes': 5,
+            'pomodoro_auto_start': False,
+            'pomodoro_ring_thickness': 5.0,
+            'pomodoro_icon_size': 14.0
         }
         self.start_with_system = defaults['start_with_system']
         self.alpha = defaults['alpha']
@@ -124,11 +429,31 @@ class MousehairOverlay(QtWidgets.QWidget):
         self.fade_out_delay = defaults['fade_out_delay']
         self.fade_in_delay = defaults['fade_in_delay']
         self.fade_duration = defaults['fade_duration']
+        self.crosshair_effect = defaults['crosshair_effect']
+
+        # Legacy aliases. These remain available while older code and config
+        # files are phased out.
         self.animate_enabled = defaults['animate_enabled']
         self.animation_style = defaults['animation_style']
         self.animate_speed = defaults['animate_speed']
         self.animate_spacing = defaults['animate_spacing']
         self.animate_segment_length = defaults['animate_segment_length']
+        self.pulse_strength = defaults['pulse_strength']
+        self.pulse_period = defaults['pulse_period']
+        self.arrow_first_offset = defaults['arrow_first_offset']
+        self.arrow_spacing = defaults['arrow_spacing']
+        self.arrow_length = defaults['arrow_length']
+        self.arrow_border_over_line = defaults['arrow_border_over_line']
+        self.arrow_width = defaults['arrow_width']
+        self.ring_enabled = defaults['ring_enabled']
+        self.magnifier_enabled = defaults['magnifier_enabled']
+        self.magnification = defaults['magnification']
+        self.pomodoro_enabled = defaults['pomodoro_enabled']
+        self.pomodoro_focus_minutes = defaults['pomodoro_focus_minutes']
+        self.pomodoro_break_minutes = defaults['pomodoro_break_minutes']
+        self.pomodoro_auto_start = defaults['pomodoro_auto_start']
+        self.pomodoro_ring_thickness = defaults['pomodoro_ring_thickness']
+        self.pomodoro_icon_size = defaults['pomodoro_icon_size']
         self.animation_phase = 0.0
         self.animation_clock = QtCore.QElapsedTimer()
         self.animation_clock.start()
@@ -159,11 +484,74 @@ class MousehairOverlay(QtWidgets.QWidget):
             self.fade_out_delay = int(data.get('fade_out_delay', self.fade_out_delay))
             self.fade_in_delay = int(data.get('fade_in_delay', self.fade_in_delay))
             self.fade_duration = int(data.get('fade_duration', self.fade_duration))
-            self.animate_enabled = bool(data.get('animate_enabled', self.animate_enabled))
-            self.animation_style = str(data.get('animation_style', self.animation_style))
+            legacy_animate_enabled = bool(
+                data.get(
+                    'animate_enabled',
+                    self.animate_enabled,
+                )
+            )
+
+            legacy_animation_style = str(
+                data.get(
+                    'animation_style',
+                    self.animation_style,
+                )
+            )
+
+            if 'crosshair_effect' in data:
+                # New-format configuration.
+                requested_effect = str(
+                    data.get(
+                        'crosshair_effect',
+                        self.crosshair_effect,
+                    )
+                )
+            else:
+                # Migration from the pre-Effects-Engine configuration model.
+                # animate_enabled=False historically meant Static regardless
+                # of the stored animation_style value.
+                requested_effect = (
+                    legacy_animation_style
+                    if legacy_animate_enabled
+                    else "static"
+                )
+
+            requested_effect = (
+                requested_effect
+                .strip()
+                .lower()
+            )
+
+            if requested_effect not in self._crosshair_renderers():
+                requested_effect = "static"
+
+            self.crosshair_effect = requested_effect
+
+            # Keep the old attributes as derived aliases so older code remains
+            # harmless while the migration is completed incrementally.
+            self.animation_style = self.crosshair_effect
+            self.animate_enabled = (
+                self.crosshair_effect != "static"
+            )
             self.animate_speed = int(data.get('animate_speed', self.animate_speed))
             self.animate_spacing = int(data.get('animate_spacing', self.animate_spacing))
             self.animate_segment_length = int(data.get('animate_segment_length', self.animate_segment_length))
+            self.pulse_strength = float(data.get('pulse_strength', self.pulse_strength))
+            self.pulse_period = float(data.get('pulse_period', self.pulse_period))
+            self.arrow_first_offset = int(data.get('arrow_first_offset', self.arrow_first_offset))
+            self.arrow_spacing = int(data.get('arrow_spacing', self.arrow_spacing))
+            self.arrow_length = int(data.get('arrow_length', self.arrow_length))
+            self.arrow_border_over_line = bool(data.get('arrow_border_over_line', self.arrow_border_over_line))
+            self.arrow_width = int(data.get('arrow_width', self.arrow_width))
+            self.ring_enabled = bool(data.get('ring_enabled', self.ring_enabled))
+            self.magnifier_enabled = bool(data.get('magnifier_enabled', self.magnifier_enabled))
+            self.magnification = float(data.get('magnification', self.magnification))
+            self.pomodoro_enabled = bool(data.get('pomodoro_enabled', self.pomodoro_enabled))
+            self.pomodoro_focus_minutes = int(data.get('pomodoro_focus_minutes', self.pomodoro_focus_minutes))
+            self.pomodoro_break_minutes = int(data.get('pomodoro_break_minutes', self.pomodoro_break_minutes))
+            self.pomodoro_auto_start = bool(data.get('pomodoro_auto_start', self.pomodoro_auto_start))
+            self.pomodoro_ring_thickness = float(data.get('pomodoro_ring_thickness', self.pomodoro_ring_thickness))
+            self.pomodoro_icon_size = float(data.get('pomodoro_icon_size', self.pomodoro_icon_size))
             self.hotkey_key = str(data.get('hotkey_key', self.hotkey_key))
             self.hotkey_modifiers = list(data.get('hotkey_modifiers', self.hotkey_modifiers))
         except:
@@ -187,23 +575,230 @@ class MousehairOverlay(QtWidgets.QWidget):
                 'fade_out_delay': self.fade_out_delay,
                 'fade_in_delay': self.fade_in_delay,
                 'fade_duration': self.fade_duration,
-                'animate_enabled': self.animate_enabled,
-                'animation_style': self.animation_style,
+                'crosshair_effect': self.crosshair_effect,
+
+                # Compatibility fields for older Mousehair builds.
+                'animate_enabled': (
+                    self.crosshair_effect != 'static'
+                ),
+                'animation_style': self.crosshair_effect,
                 'animate_speed': self.animate_speed,
                 'animate_spacing': self.animate_spacing,
                 'animate_segment_length': self.animate_segment_length,
+                'pulse_strength': self.pulse_strength,
+                'pulse_period': self.pulse_period,
+                'arrow_first_offset': self.arrow_first_offset,
+                'arrow_spacing': self.arrow_spacing,
+                'arrow_length': self.arrow_length,
+                'arrow_border_over_line': self.arrow_border_over_line,
+                'arrow_width': self.arrow_width,
+                'ring_enabled': self.ring_enabled,
+                'magnifier_enabled': self.magnifier_enabled,
+                'magnification': self.magnification,
+                'pomodoro_enabled': self.pomodoro_enabled,
+                'pomodoro_focus_minutes': self.pomodoro_focus_minutes,
+                'pomodoro_break_minutes': self.pomodoro_break_minutes,
+                'pomodoro_auto_start': self.pomodoro_auto_start,
+                'pomodoro_ring_thickness': self.pomodoro_ring_thickness,
+                'pomodoro_icon_size': self.pomodoro_icon_size,
                 'hotkey_key': self.hotkey_key,
                 'hotkey_modifiers': self.hotkey_modifiers
             }, f)
 
+    def _gsettings_get(self, schema, key):
+        """Read one Cinnamon setting through the gsettings command."""
+        try:
+            result = subprocess.run(
+                [
+                    "gsettings",
+                    "get",
+                    schema,
+                    key,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            return result.stdout.strip()
+
+        except (
+            OSError,
+            subprocess.CalledProcessError,
+        ) as exc:
+            print(
+                "Mousehair warning: could not read "
+                f"{schema} {key}: {exc}",
+                file=sys.stderr,
+            )
+
+            return None
+
+    def _gsettings_set(self, schema, key, value):
+        """Write one Cinnamon setting through the gsettings command."""
+        try:
+            subprocess.run(
+                [
+                    "gsettings",
+                    "set",
+                    schema,
+                    key,
+                    str(value),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+            return True
+
+        except (
+            OSError,
+            subprocess.CalledProcessError,
+        ) as exc:
+            print(
+                "Mousehair warning: could not set "
+                f"{schema} {key}: {exc}",
+                file=sys.stderr,
+            )
+
+            return False
+
+    def _begin_settings_magnifier_session(self):
+        """Temporarily hand magnification to Cinnamon while Settings is open.
+
+        The Mousehair Cinnamon extension already suppresses its pointer lens
+        whenever Cinnamon's own full-screen magnifier is active.
+
+        Preserve the user's original Cinnamon accessibility settings so they
+        can be restored exactly when the Settings dialog closes.
+        """
+        applications_schema = (
+            "org.cinnamon.desktop.a11y.applications"
+        )
+
+        magnifier_schema = (
+            "org.cinnamon.desktop.a11y.magnifier"
+        )
+
+        enabled_key = (
+            "screen-magnifier-enabled"
+        )
+
+        factor_key = (
+            "mag-factor"
+        )
+
+        previous_enabled = self._gsettings_get(
+            applications_schema,
+            enabled_key,
+        )
+
+        previous_factor = self._gsettings_get(
+            magnifier_schema,
+            factor_key,
+        )
+
+        state = {
+            "enabled": previous_enabled,
+            "factor": previous_factor,
+        }
+
+        # Use approximately the same zoom level as Mousehair's pointer lens.
+        # Cinnamon expects a floating-point GSettings value.
+        self._gsettings_set(
+            magnifier_schema,
+            factor_key,
+            float(self.magnification),
+        )
+
+        self._gsettings_set(
+            applications_schema,
+            enabled_key,
+            "true",
+        )
+
+        return state
+
+    def _end_settings_magnifier_session(self, state):
+        """Restore Cinnamon magnification after Settings closes."""
+        if not state:
+            return
+
+        applications_schema = (
+            "org.cinnamon.desktop.a11y.applications"
+        )
+
+        magnifier_schema = (
+            "org.cinnamon.desktop.a11y.magnifier"
+        )
+
+        enabled_key = (
+            "screen-magnifier-enabled"
+        )
+
+        factor_key = (
+            "mag-factor"
+        )
+
+        previous_factor = state.get(
+            "factor"
+        )
+
+        previous_enabled = state.get(
+            "enabled"
+        )
+
+        # Restore the factor first so Cinnamon never briefly reappears at the
+        # temporary Mousehair zoom level.
+        if previous_factor is not None:
+            self._gsettings_set(
+                magnifier_schema,
+                factor_key,
+                previous_factor,
+            )
+
+        if previous_enabled is not None:
+            self._gsettings_set(
+                applications_schema,
+                enabled_key,
+                previous_enabled,
+            )
+
     def show_settings_dialog(self):
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Mousehair Settings")
-        dialog.setMinimumWidth(480)
-        layout = QtWidgets.QFormLayout(dialog)
+        dialog.setMinimumWidth(520)
 
-        start_with_system_chk = QtWidgets.QCheckBox("Start with system")
-        start_with_system_chk.setChecked(self.start_with_system)
+        dialog_layout = QtWidgets.QVBoxLayout(dialog)
+
+        tabs = QtWidgets.QTabWidget()
+        dialog_layout.addWidget(tabs)
+
+        # ============================================================
+        # GENERAL TAB
+        # ============================================================
+
+        general_scroll = QtWidgets.QScrollArea()
+        general_scroll.setWidgetResizable(True)
+        general_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        general_scroll.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarAlwaysOff
+        )
+
+        general_widget = QtWidgets.QWidget()
+        general_layout = QtWidgets.QFormLayout(general_widget)
+        general_layout.setContentsMargins(12, 12, 12, 12)
+
+        general_scroll.setWidget(general_widget)
+        tabs.addTab(general_scroll, "General")
+
+        start_with_system_chk = QtWidgets.QCheckBox(
+            "Start with system"
+        )
+        start_with_system_chk.setChecked(
+            self.start_with_system
+        )
 
         alpha_spin = QtWidgets.QDoubleSpinBox()
         alpha_spin.setRange(0.0, 1.0)
@@ -216,115 +811,862 @@ class MousehairOverlay(QtWidgets.QWidget):
 
         outer_thick_spin = QtWidgets.QSpinBox()
         outer_thick_spin.setRange(1, 20)
-        outer_thick_spin.setValue(self.outer_thickness)
+        outer_thick_spin.setValue(
+            self.outer_thickness
+        )
 
         inner_thick_spin = QtWidgets.QSpinBox()
         inner_thick_spin.setRange(1, 20)
-        inner_thick_spin.setValue(self.inner_thickness)
+        inner_thick_spin.setValue(
+            self.inner_thickness
+        )
+
+        pending_outer_color = self.outer_color
+        pending_inner_color = self.inner_color
 
         outer_color_btn = QtWidgets.QPushButton()
-        outer_color_btn.setStyleSheet(f"background-color: {self.outer_color}")
+        outer_color_btn.setStyleSheet(
+            f"background-color: {pending_outer_color}"
+        )
+
         def pick_outer():
-            color = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.outer_color), dialog, "Select Outer Color")
+            nonlocal pending_outer_color
+
+            color = QtWidgets.QColorDialog.getColor(
+                QtGui.QColor(
+                    pending_outer_color
+                ),
+                dialog,
+                "Select Outer Color",
+            )
+
             if color.isValid():
-                self.outer_color = color.name()
-                outer_color_btn.setStyleSheet(f"background-color: {self.outer_color}")
-        outer_color_btn.clicked.connect(pick_outer)
+                pending_outer_color = color.name()
+
+                outer_color_btn.setStyleSheet(
+                    f"background-color: {pending_outer_color}"
+                )
+
+        outer_color_btn.clicked.connect(
+            pick_outer
+        )
 
         inner_color_btn = QtWidgets.QPushButton()
-        inner_color_btn.setStyleSheet(f"background-color: {self.inner_color}")
-        def pick_inner():
-            color = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.inner_color), dialog, "Select Inner Color")
-            if color.isValid():
-                self.inner_color = color.name()
-                inner_color_btn.setStyleSheet(f"background-color: {self.inner_color}")
-        inner_color_btn.clicked.connect(pick_inner)
+        inner_color_btn.setStyleSheet(
+            f"background-color: {pending_inner_color}"
+        )
 
-        fade_chk = QtWidgets.QCheckBox("Enable fade")
-        fade_chk.setChecked(self.fade_enabled)
-        fade_chk.setVisible(True)
+        def pick_inner():
+            nonlocal pending_inner_color
+
+            color = QtWidgets.QColorDialog.getColor(
+                QtGui.QColor(
+                    pending_inner_color
+                ),
+                dialog,
+                "Select Inner Color",
+            )
+
+            if color.isValid():
+                pending_inner_color = color.name()
+
+                inner_color_btn.setStyleSheet(
+                    f"background-color: {pending_inner_color}"
+                )
+
+        inner_color_btn.clicked.connect(
+            pick_inner
+        )
+
+        ring_chk = QtWidgets.QCheckBox(
+            "Enable ring reticule"
+        )
+        ring_chk.setChecked(
+            self.ring_enabled
+        )
+
+        magnifier_chk = QtWidgets.QCheckBox(
+            "Enable magnification inside ring"
+        )
+        magnifier_chk.setChecked(
+            self.magnifier_enabled
+        )
+
+        magnification_spin = QtWidgets.QDoubleSpinBox()
+        magnification_spin.setRange(
+            1.25,
+            5.0,
+        )
+        magnification_spin.setSingleStep(
+            0.25
+        )
+        magnification_spin.setDecimals(2)
+        magnification_spin.setValue(
+            self.magnification
+        )
+        magnification_spin.setSuffix("x")
+
+        fade_chk = QtWidgets.QCheckBox(
+            "Enable fade"
+        )
+        fade_chk.setChecked(
+            self.fade_enabled
+        )
 
         fade_out_spin = QtWidgets.QSpinBox()
-        fade_out_spin.setRange(0, 5000)
-        fade_out_spin.setValue(self.fade_out_delay)
+        fade_out_spin.setRange(
+            0,
+            5000,
+        )
+        fade_out_spin.setValue(
+            self.fade_out_delay
+        )
+        fade_out_spin.setSuffix(" ms")
 
         fade_in_spin = QtWidgets.QSpinBox()
-        fade_in_spin.setRange(0, 5000)
-        fade_in_spin.setValue(self.fade_in_delay)
+        fade_in_spin.setRange(
+            0,
+            5000,
+        )
+        fade_in_spin.setValue(
+            self.fade_in_delay
+        )
+        fade_in_spin.setSuffix(" ms")
 
         fade_duration_spin = QtWidgets.QSpinBox()
-        fade_duration_spin.setRange(0, 5000)
-        fade_duration_spin.setValue(self.fade_duration)
+        fade_duration_spin.setRange(
+            0,
+            5000,
+        )
+        fade_duration_spin.setValue(
+            self.fade_duration
+        )
+        fade_duration_spin.setSuffix(" ms")
 
-        animate_chk = QtWidgets.QCheckBox("Enable crawling line animation")
-        animate_chk.setChecked(self.animate_enabled)
+        general_layout.addRow(
+            start_with_system_chk
+        )
+        general_layout.addRow(
+            "Alpha:",
+            alpha_spin,
+        )
+        general_layout.addRow(
+            "Gap:",
+            gap_spin,
+        )
+        general_layout.addRow(
+            "Outer thickness:",
+            outer_thick_spin,
+        )
+        general_layout.addRow(
+            "Inner thickness:",
+            inner_thick_spin,
+        )
+        general_layout.addRow(
+            "Outer colour:",
+            outer_color_btn,
+        )
+        general_layout.addRow(
+            "Inner colour:",
+            inner_color_btn,
+        )
+        general_layout.addRow(
+            ring_chk
+        )
+        general_layout.addRow(
+            magnifier_chk
+        )
+        general_layout.addRow(
+            "Magnification:",
+            magnification_spin,
+        )
+        general_layout.addRow(
+            fade_chk
+        )
+        general_layout.addRow(
+            "Fade out delay:",
+            fade_out_spin,
+        )
+        general_layout.addRow(
+            "Fade in delay:",
+            fade_in_spin,
+        )
+        general_layout.addRow(
+            "Fade duration:",
+            fade_duration_spin,
+        )
+
+        # ============================================================
+        # EFFECTS TAB
+        # ============================================================
+
+        effects_scroll = QtWidgets.QScrollArea()
+        effects_scroll.setWidgetResizable(True)
+        effects_scroll.setFrameShape(
+            QtWidgets.QFrame.NoFrame
+        )
+        effects_scroll.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarAlwaysOff
+        )
+
+        effects_widget = QtWidgets.QWidget()
+        effects_layout = QtWidgets.QFormLayout(
+            effects_widget
+        )
+        effects_layout.setContentsMargins(
+            12,
+            12,
+            12,
+            12,
+        )
+
+        effects_scroll.setWidget(
+            effects_widget
+        )
+        tabs.addTab(
+            effects_scroll,
+            "Effects",
+        )
+
         animation_style_combo = QtWidgets.QComboBox()
-        animation_style_combo.addItem("Sliding inward", "sliding")
-        animation_style_combo.addItem("Direction arrows", "arrows")
 
-        animation_style_index = animation_style_combo.findData(self.animation_style)
+        for effect_class in self._crosshair_effect_classes():
+            animation_style_combo.addItem(
+                effect_class.display_name,
+                effect_class.name,
+            )
+
+        animation_style_index = (
+            animation_style_combo.findData(
+                self.crosshair_effect
+            )
+        )
+
         if animation_style_index >= 0:
-            animation_style_combo.setCurrentIndex(animation_style_index)
+            animation_style_combo.setCurrentIndex(
+                animation_style_index
+            )
 
-        animate_speed_spin = QtWidgets.QSpinBox()
-        animate_speed_spin.setRange(10, 1000)
-        animate_speed_spin.setValue(self.animate_speed)
-        animate_speed_spin.setSuffix(" px/s")
+        effects_layout.addRow(
+            "Crosshair effect:",
+            animation_style_combo,
+        )
 
-        animate_spacing_spin = QtWidgets.QSpinBox()
-        animate_spacing_spin.setRange(8, 200)
-        animate_spacing_spin.setValue(self.animate_spacing)
-        animate_spacing_spin.setSuffix(" px")
+        effect_settings_box = QtWidgets.QGroupBox(
+            "Effect settings"
+        )
 
-        animate_segment_spin = QtWidgets.QSpinBox()
-        animate_segment_spin.setRange(2, 100)
-        animate_segment_spin.setValue(self.animate_segment_length)
-        animate_segment_spin.setSuffix(" px")
+        effect_settings_layout = QtWidgets.QFormLayout(
+            effect_settings_box
+        )
 
-        layout.addRow(start_with_system_chk)
-        layout.addRow("Alpha:", alpha_spin)
-        layout.addRow("Gap:", gap_spin)
-        layout.addRow("Outer thickness:", outer_thick_spin)
-        layout.addRow("Inner thickness:", inner_thick_spin)
-        layout.addRow("Outer color:", outer_color_btn)
-        layout.addRow("Inner color:", inner_color_btn)
-        layout.addRow(fade_chk)
-        layout.addRow("Fade out delay:", fade_out_spin)
-        layout.addRow("Fade in delay:", fade_in_spin)
-        layout.addRow("Fade duration:", fade_duration_spin)
-        layout.addRow(animate_chk)
-        layout.addRow("Animation style:", animation_style_combo)
-        layout.addRow("Animation speed:", animate_speed_spin)
-        layout.addRow("Animation spacing:", animate_spacing_spin)
-        layout.addRow("Animation segment length:", animate_segment_spin)
+        effects_layout.addRow(
+            effect_settings_box
+        )
 
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        layout.addRow(buttons)
+        effect_pending_values = {}
 
-        def apply():
-            self.start_with_system = start_with_system_chk.isChecked()
+        for effect_class in self._crosshair_effect_classes():
+            for setting in effect_class.settings:
+                effect_pending_values.setdefault(
+                    setting.key,
+                    getattr(
+                        self,
+                        setting.key,
+                        setting.default,
+                    ),
+                )
+
+        effect_setting_widgets = {}
+
+        def effect_widget_value(
+            widget,
+            setting,
+        ):
+            if setting.kind == "bool":
+                return widget.isChecked()
+
+            if setting.kind == "int":
+                return int(
+                    widget.value()
+                )
+
+            if setting.kind == "float":
+                return float(
+                    widget.value()
+                )
+
+            raise ValueError(
+                "Unsupported effect setting kind: "
+                f"{setting.kind}"
+            )
+
+        def capture_effect_settings():
+            for key, item in (
+                effect_setting_widgets.items()
+            ):
+                setting, widget = item
+
+                effect_pending_values[key] = (
+                    effect_widget_value(
+                        widget,
+                        setting,
+                    )
+                )
+
+        def clear_effect_settings():
+            while effect_settings_layout.rowCount():
+                effect_settings_layout.removeRow(
+                    0
+                )
+
+            effect_setting_widgets.clear()
+
+        def create_effect_setting_widget(
+            setting,
+        ):
+            value = effect_pending_values.get(
+                setting.key,
+                setting.default,
+            )
+
+            if setting.kind == "bool":
+                widget = QtWidgets.QCheckBox()
+                widget.setChecked(
+                    bool(value)
+                )
+                return widget
+
+            if setting.kind == "int":
+                widget = QtWidgets.QSpinBox()
+
+                widget.setRange(
+                    int(
+                        setting.minimum
+                        if setting.minimum is not None
+                        else -2147483647
+                    ),
+                    int(
+                        setting.maximum
+                        if setting.maximum is not None
+                        else 2147483647
+                    ),
+                )
+
+                if setting.step is not None:
+                    widget.setSingleStep(
+                        int(setting.step)
+                    )
+
+                if setting.suffix:
+                    widget.setSuffix(
+                        setting.suffix
+                    )
+
+                widget.setValue(
+                    int(value)
+                )
+
+                return widget
+
+            if setting.kind == "float":
+                widget = QtWidgets.QDoubleSpinBox()
+
+                widget.setRange(
+                    float(
+                        setting.minimum
+                        if setting.minimum is not None
+                        else -1000000.0
+                    ),
+                    float(
+                        setting.maximum
+                        if setting.maximum is not None
+                        else 1000000.0
+                    ),
+                )
+
+                widget.setDecimals(
+                    max(
+                        0,
+                        int(
+                            setting.decimals
+                        ),
+                    )
+                )
+
+                if setting.step is not None:
+                    widget.setSingleStep(
+                        float(setting.step)
+                    )
+
+                if setting.suffix:
+                    widget.setSuffix(
+                        setting.suffix
+                    )
+
+                widget.setValue(
+                    float(value)
+                )
+
+                return widget
+
+            raise ValueError(
+                "Unsupported effect setting kind: "
+                f"{setting.kind}"
+            )
+
+        def rebuild_effect_settings():
+            capture_effect_settings()
+            clear_effect_settings()
+
+            effect_name = (
+                animation_style_combo.currentData()
+                or "static"
+            )
+
+            effect_class = (
+                self._crosshair_renderers().get(
+                    effect_name
+                )
+            )
+
+            settings = (
+                effect_class.settings
+                if effect_class is not None
+                else ()
+            )
+
+            for setting in settings:
+                widget = (
+                    create_effect_setting_widget(
+                        setting
+                    )
+                )
+
+                effect_setting_widgets[
+                    setting.key
+                ] = (
+                    setting,
+                    widget,
+                )
+
+                if setting.kind == "bool":
+                    widget.setText(
+                        setting.label
+                    )
+                    effect_settings_layout.addRow(
+                        widget
+                    )
+
+                else:
+                    effect_settings_layout.addRow(
+                        f"{setting.label}:",
+                        widget,
+                    )
+
+            effect_settings_box.setVisible(
+                bool(settings)
+            )
+
+        animation_style_combo.currentIndexChanged.connect(
+            rebuild_effect_settings
+        )
+
+        rebuild_effect_settings()
+
+        # ============================================================
+        # COMPLICATIONS TAB
+        # ============================================================
+
+        complications_scroll = QtWidgets.QScrollArea()
+        complications_scroll.setWidgetResizable(True)
+        complications_scroll.setFrameShape(
+            QtWidgets.QFrame.NoFrame
+        )
+        complications_scroll.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarAlwaysOff
+        )
+
+        complications_widget = QtWidgets.QWidget()
+        complications_layout = QtWidgets.QVBoxLayout(
+            complications_widget
+        )
+        complications_layout.setContentsMargins(
+            12,
+            12,
+            12,
+            12,
+        )
+
+        complications_scroll.setWidget(
+            complications_widget
+        )
+        tabs.addTab(
+            complications_scroll,
+            "Complications",
+        )
+
+        pomodoro_box = QtWidgets.QGroupBox(
+            "Pomodoro"
+        )
+
+        pomodoro_layout = QtWidgets.QFormLayout(
+            pomodoro_box
+        )
+
+        complications_layout.addWidget(
+            pomodoro_box
+        )
+
+        complications_layout.addStretch(1)
+
+        pomodoro_enabled_chk = QtWidgets.QCheckBox(
+            "Enable Pomodoro complication"
+        )
+        pomodoro_enabled_chk.setChecked(
+            self.pomodoro_enabled
+        )
+
+        pomodoro_focus_spin = QtWidgets.QSpinBox()
+        pomodoro_focus_spin.setRange(
+            1,
+            180,
+        )
+        pomodoro_focus_spin.setValue(
+            self.pomodoro_focus_minutes
+        )
+        pomodoro_focus_spin.setSuffix(
+            " min"
+        )
+
+        pomodoro_break_spin = QtWidgets.QSpinBox()
+        pomodoro_break_spin.setRange(
+            1,
+            60,
+        )
+        pomodoro_break_spin.setValue(
+            self.pomodoro_break_minutes
+        )
+        pomodoro_break_spin.setSuffix(
+            " min"
+        )
+
+        pomodoro_auto_start_chk = QtWidgets.QCheckBox(
+            "Automatically start next phase"
+        )
+        pomodoro_auto_start_chk.setChecked(
+            self.pomodoro_auto_start
+        )
+
+        pomodoro_ring_thickness_spin = QtWidgets.QSpinBox()
+        pomodoro_ring_thickness_spin.setRange(
+            1,
+            60,
+        )
+        pomodoro_ring_thickness_spin.setSingleStep(
+            1
+        )
+        pomodoro_ring_thickness_spin.setValue(
+            int(round(self.pomodoro_ring_thickness))
+        )
+        pomodoro_ring_thickness_spin.setSuffix(
+            " px"
+        )
+
+        pomodoro_icon_size_spin = QtWidgets.QSpinBox()
+        pomodoro_icon_size_spin.setRange(
+            6,
+            120,
+        )
+        pomodoro_icon_size_spin.setSingleStep(
+            1
+        )
+        pomodoro_icon_size_spin.setValue(
+            int(round(self.pomodoro_icon_size))
+        )
+        pomodoro_icon_size_spin.setSuffix(
+            " px"
+        )
+
+        pomodoro_layout.addRow(
+            pomodoro_enabled_chk
+        )
+        pomodoro_layout.addRow(
+            "Focus duration:",
+            pomodoro_focus_spin,
+        )
+        pomodoro_layout.addRow(
+            "Break duration:",
+            pomodoro_break_spin,
+        )
+        pomodoro_layout.addRow(
+            pomodoro_auto_start_chk
+        )
+        pomodoro_layout.addRow(
+            "Ring thickness:",
+            pomodoro_ring_thickness_spin,
+        )
+        pomodoro_layout.addRow(
+            "Tomato icon size:",
+            pomodoro_icon_size_spin,
+        )
+
+        def update_pomodoro_controls():
+            enabled = (
+                pomodoro_enabled_chk.isChecked()
+            )
+
+            pomodoro_focus_spin.setEnabled(
+                enabled
+            )
+            pomodoro_break_spin.setEnabled(
+                enabled
+            )
+            pomodoro_auto_start_chk.setEnabled(
+                enabled
+            )
+            pomodoro_ring_thickness_spin.setEnabled(
+                enabled
+            )
+            pomodoro_icon_size_spin.setEnabled(
+                enabled
+            )
+
+        pomodoro_enabled_chk.toggled.connect(
+            update_pomodoro_controls
+        )
+
+        update_pomodoro_controls()
+
+        # ============================================================
+        # SHARED CONTROL LOGIC
+        # ============================================================
+
+        def update_ring_controls():
+            ring_selected = (
+                ring_chk.isChecked()
+            )
+
+            magnifier_chk.setEnabled(
+                ring_selected
+            )
+
+            magnification_spin.setEnabled(
+                ring_selected
+                and magnifier_chk.isChecked()
+            )
+
+        ring_chk.toggled.connect(
+            update_ring_controls
+        )
+        magnifier_chk.toggled.connect(
+            update_ring_controls
+        )
+
+        update_ring_controls()
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok
+            | QtWidgets.QDialogButtonBox.Apply
+            | QtWidgets.QDialogButtonBox.Cancel
+        )
+
+        dialog_layout.addWidget(
+            buttons
+        )
+
+        def apply_settings():
+            self.start_with_system = (
+                start_with_system_chk.isChecked()
+            )
+
             self.alpha = alpha_spin.value()
+            self.current_alpha = self.alpha
+
             self.gap = gap_spin.value()
-            self.outer_thickness = outer_thick_spin.value()
-            self.inner_thickness = inner_thick_spin.value()
-            self.fade_enabled = fade_chk.isChecked()
-            self.fade_out_delay = fade_out_spin.value()
-            self.fade_in_delay = fade_in_spin.value()
-            self.fade_duration = fade_duration_spin.value()
-            self.animate_enabled = animate_chk.isChecked()
-            self.animation_style = animation_style_combo.currentData()
-            self.animate_speed = animate_speed_spin.value()
-            self.animate_spacing = animate_spacing_spin.value()
-            self.animate_segment_length = animate_segment_spin.value()
+
+            self.outer_thickness = (
+                outer_thick_spin.value()
+            )
+
+            self.inner_thickness = (
+                inner_thick_spin.value()
+            )
+
+            self.outer_color = (
+                pending_outer_color
+            )
+
+            self.inner_color = (
+                pending_inner_color
+            )
+
+            self.ring_enabled = (
+                ring_chk.isChecked()
+            )
+
+            self.magnifier_enabled = (
+                self.ring_enabled
+                and magnifier_chk.isChecked()
+            )
+
+            self.magnification = (
+                magnification_spin.value()
+            )
+
+            self.fade_enabled = (
+                fade_chk.isChecked()
+            )
+
+            self.fade_out_delay = (
+                fade_out_spin.value()
+            )
+
+            self.fade_in_delay = (
+                fade_in_spin.value()
+            )
+
+            self.fade_duration = (
+                fade_duration_spin.value()
+            )
+
+            self.crosshair_effect = (
+                animation_style_combo.currentData()
+                or "static"
+            )
+
+            self.animation_style = (
+                self.crosshair_effect
+            )
+
+            self.animate_enabled = (
+                self.crosshair_effect
+                != "static"
+            )
+
+            capture_effect_settings()
+
+            for key, value in (
+                effect_pending_values.items()
+            ):
+                setattr(
+                    self,
+                    key,
+                    value,
+                )
+
+            self.pomodoro_enabled = (
+                pomodoro_enabled_chk.isChecked()
+            )
+
+            self.pomodoro_focus_minutes = (
+                pomodoro_focus_spin.value()
+            )
+
+            self.pomodoro_break_minutes = (
+                pomodoro_break_spin.value()
+            )
+
+            self.pomodoro_auto_start = (
+                pomodoro_auto_start_chk.isChecked()
+            )
+
+            self.pomodoro_ring_thickness = (
+                pomodoro_ring_thickness_spin.value()
+            )
+
+            self.pomodoro_icon_size = (
+                pomodoro_icon_size_spin.value()
+            )
+
             self.save_settings()
+
+            self.cinnamon_lens.set_geometry(
+                self._cinnamon_lens_radius(),
+                self.magnification,
+            )
+
+            self._sync_cinnamon_ring_style()
+            self._sync_cinnamon_lens(
+                force=True
+            )
+
+            self.update()
+
+        def accept_settings():
+            apply_settings()
             dialog.accept()
 
-        buttons.accepted.connect(apply)
-        buttons.rejected.connect(dialog.reject)
-        dialog.exec_()
+        buttons.accepted.connect(
+            accept_settings
+        )
+
+        buttons.button(
+            QtWidgets.QDialogButtonBox.Apply
+        ).clicked.connect(
+            apply_settings
+        )
+
+        buttons.rejected.connect(
+            dialog.reject
+        )
+
+        screen = (
+            QtWidgets.QApplication.primaryScreen()
+        )
+
+        if screen is not None:
+            available_height = (
+                screen.availableGeometry().height()
+            )
+
+            preferred_height = min(
+                720,
+                int(
+                    available_height
+                    * 0.9
+                ),
+            )
+
+            dialog.resize(
+                max(
+                    520,
+                    dialog.sizeHint().width(),
+                ),
+                preferred_height,
+            )
+
+        # Mousehair's compositor lens clones the desktop scene rather than
+        # the final composited framebuffer. That means transient top-level
+        # windows such as this Settings dialog can otherwise appear transparent
+        # or "X-ray" through the lens.
+        #
+        # While Settings is open, use Cinnamon's true full-screen magnifier.
+        # The Mousehair Cinnamon extension detects that state and suppresses
+        # its own lens automatically while keeping the reticule available.
+        settings_magnifier_state = (
+            self._begin_settings_magnifier_session()
+        )
+
+        try:
+            dialog.exec_()
+
+        finally:
+            self._end_settings_magnifier_session(
+                settings_magnifier_state
+            )
+
+            # Force Mousehair's compositor state back across D-Bus immediately
+            # rather than waiting for the next heartbeat after Cinnamon zoom
+            # has been restored.
+            self._sync_cinnamon_lens(
+                force=True
+            )
 
     def update_fade(self):
         if not self.fade_enabled:
+            self.current_alpha = self.alpha
+            self._sync_cinnamon_lens()
             return
 
         now = QtGui.QCursor.pos()
@@ -334,134 +1676,21 @@ class MousehairOverlay(QtWidgets.QWidget):
         elapsed = self.last_move_time.elapsed()
 
         if elapsed > self.fade_out_delay:
-            t = min(1.0, (elapsed - self.fade_out_delay) / self.fade_duration)
-            self.current_alpha = max(0.0, self.alpha * (1.0 - t))
+            if self.fade_duration <= 0:
+                self.current_alpha = 0.0
+            else:
+                t = min(
+                    1.0,
+                    (elapsed - self.fade_out_delay) / self.fade_duration,
+                )
+                self.current_alpha = max(
+                    0.0,
+                    self.alpha * (1.0 - t),
+                )
         else:
             self.current_alpha = self.alpha
 
-    def draw_static_lines(self, painter, mx, my, pen):
-        painter.setPen(pen)
-        painter.drawLine(0, my, max(0, mx - self.gap), my)
-        painter.drawLine(mx + self.gap, my, self.width(), my)
-        painter.drawLine(mx, 0, mx, max(0, my - self.gap))
-        painter.drawLine(mx, my + self.gap, mx, self.height())
-
-    def draw_animated_segment_line(self, painter, start_x, start_y, end_x, end_y, toward_mouse_sign):
-        dx = end_x - start_x
-        dy = end_y - start_y
-        length = int((dx * dx + dy * dy) ** 0.5)
-        if length <= 0:
-            return
-
-        unit_x = dx / length
-        unit_y = dy / length
-        spacing = max(1, self.animate_spacing)
-        segment_length = max(1, min(self.animate_segment_length, spacing))
-        phase = self.animation_phase % spacing
-
-        pos = phase - spacing
-        while pos < length:
-            seg_start = max(0, pos)
-            seg_end = min(length, pos + segment_length)
-            if seg_end > 0 and seg_start < length:
-                x1 = start_x + unit_x * seg_start
-                y1 = start_y + unit_y * seg_start
-                x2 = start_x + unit_x * seg_end
-                y2 = start_y + unit_y * seg_end
-                painter.drawLine(int(x1), int(y1), int(x2), int(y2))
-            pos += spacing
-
-    def draw_animated_lines(self, painter, mx, my, pen):
-        painter.setPen(pen)
-        self.draw_animated_segment_line(painter, 0, my, max(0, mx - self.gap), my, 1)
-        self.draw_animated_segment_line(painter, self.width(), my, min(self.width(), mx + self.gap), my, 1)
-        self.draw_animated_segment_line(painter, mx, 0, mx, max(0, my - self.gap), 1)
-        self.draw_animated_segment_line(painter, mx, self.height(), mx, min(self.height(), my + self.gap), 1)
-
-    def draw_arrow_line(self, painter, start_x, start_y, end_x, end_y, pen):
-        """Draw evenly spaced arrowheads pointing from the screen edge inward."""
-        dx = end_x - start_x
-        dy = end_y - start_y
-        length = (dx * dx + dy * dy) ** 0.5
-        if length <= 0:
-            return
-
-        unit_x = dx / length
-        unit_y = dy / length
-        perpendicular_x = -unit_y
-        perpendicular_y = unit_x
-
-        spacing = max(8, self.animate_spacing)
-        arrow_length = max(4, min(self.animate_segment_length, spacing // 2))
-        arrow_half_width = max(3, arrow_length * 0.6)
-
-        painter.setPen(pen)
-
-        position = spacing / 2.0
-        while position < length:
-            tip_x = start_x + unit_x * position
-            tip_y = start_y + unit_y * position
-
-            base_x = tip_x - unit_x * arrow_length
-            base_y = tip_y - unit_y * arrow_length
-
-            left_x = base_x + perpendicular_x * arrow_half_width
-            left_y = base_y + perpendicular_y * arrow_half_width
-            right_x = base_x - perpendicular_x * arrow_half_width
-            right_y = base_y - perpendicular_y * arrow_half_width
-
-            painter.drawLine(
-                int(left_x), int(left_y),
-                int(tip_x), int(tip_y)
-            )
-            painter.drawLine(
-                int(right_x), int(right_y),
-                int(tip_x), int(tip_y)
-            )
-
-            position += spacing
-
-    def draw_arrow_lines(self, painter, mx, my, pen):
-        """Draw arrowheads on all four crosshair arms, pointing at the mouse."""
-        self.draw_arrow_line(
-            painter, 0, my, max(0, mx - self.gap), my, pen
-        )
-        self.draw_arrow_line(
-            painter, self.width(), my, min(self.width(), mx + self.gap), my, pen
-        )
-        self.draw_arrow_line(
-            painter, mx, 0, mx, max(0, my - self.gap), pen
-        )
-        self.draw_arrow_line(
-            painter, mx, self.height(), mx, min(self.height(), my + self.gap), pen
-        )
-
-    def draw_crosshair(self, painter, mx, my, outer_pen, inner_pen):
-        """Draw the currently selected crosshair style.
-
-        Keeping the style-selection logic in one method prevents paintEvent()
-        from becoming a long chain of effect-specific conditions as more
-        rendering styles are added.
-        """
-        if not self.animate_enabled:
-            self.draw_static_lines(painter, mx, my, outer_pen)
-            self.draw_static_lines(painter, mx, my, inner_pen)
-            return
-
-        if self.animation_style == "sliding":
-            self.draw_animated_lines(painter, mx, my, outer_pen)
-            self.draw_animated_lines(painter, mx, my, inner_pen)
-            return
-
-        if self.animation_style == "arrows":
-            self.draw_arrow_lines(painter, mx, my, outer_pen)
-            self.draw_arrow_lines(painter, mx, my, inner_pen)
-            return
-
-        # Fall back to the ordinary static crosshair if a configuration file
-        # contains an unknown or no-longer-supported animation style.
-        self.draw_static_lines(painter, mx, my, outer_pen)
-        self.draw_static_lines(painter, mx, my, inner_pen)
+        self._sync_cinnamon_lens()
 
     def paintEvent(self, event):
         if self.animate_enabled:
@@ -482,7 +1711,17 @@ class MousehairOverlay(QtWidgets.QWidget):
         inner_pen = QtGui.QPen(inner_color)
         inner_pen.setWidth(self.inner_thickness)
 
+        self.draw_magnifier(painter, mx, my)
         self.draw_crosshair(painter, mx, my, outer_pen, inner_pen)
+        self.draw_ring(painter, mx, my, outer_pen, inner_pen)
+
+        # Complications paint last so they can deliberately sit above the
+        # ordinary reticule where their placement policy calls for it.
+        self.draw_complications(
+            painter,
+            mx,
+            my,
+        )
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)

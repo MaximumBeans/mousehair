@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DESTINATION="org.maximumbeans.Mousehair.Cinnamon"
+OBJECT_PATH="/org/maximumbeans/Mousehair/Cinnamon"
+INTERFACE="org.maximumbeans.Mousehair.Cinnamon"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  mousehair-lensctl show
+  mousehair-lensctl hide
+  mousehair-lensctl opacity NUMBER
+  mousehair-lensctl state
+
+NUMBER is from 0.0 to 1.0.
+EOF
+}
+
+command="${1:-}"
+
+case "${command}" in
+    show)
+        gdbus call --session \
+            --dest "${DESTINATION}" \
+            --object-path "${OBJECT_PATH}" \
+            --method "${INTERFACE}.Show"
+        ;;
+
+    hide)
+        gdbus call --session \
+            --dest "${DESTINATION}" \
+            --object-path "${OBJECT_PATH}" \
+            --method "${INTERFACE}.Hide"
+        ;;
+
+    opacity)
+        value="${2:-}"
+        if [[ -z "${value}" ]]; then
+            usage
+            exit 2
+        fi
+
+        gdbus call --session \
+            --dest "${DESTINATION}" \
+            --object-path "${OBJECT_PATH}" \
+            --method "${INTERFACE}.SetOpacity" \
+            "${value}"
+        ;;
+
+    state)
+        gdbus call --session \
+            --dest "${DESTINATION}" \
+            --object-path "${OBJECT_PATH}" \
+            --method "${INTERFACE}.GetState"
+        ;;
+
+    *)
+        usage
+        exit 2
+        ;;
+esac
