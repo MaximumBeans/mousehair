@@ -1,6 +1,6 @@
 """Sliding-segment Mousehair crosshair effect."""
 
-from .base import CrosshairEffect
+from .base import CrosshairEffect, EffectSetting
 
 
 class SlidingCrosshairEffect(CrosshairEffect):
@@ -8,7 +8,39 @@ class SlidingCrosshairEffect(CrosshairEffect):
 
     name = "sliding"
     display_name = "Sliding inward"
-    control_family = "segments"
+
+    settings = (
+        EffectSetting(
+            key="animate_speed",
+            label="Animation speed",
+            kind="int",
+            default=180,
+            minimum=10,
+            maximum=1000,
+            step=10,
+            suffix=" px/s",
+        ),
+        EffectSetting(
+            key="animate_spacing",
+            label="Animation spacing",
+            kind="int",
+            default=32,
+            minimum=8,
+            maximum=200,
+            step=1,
+            suffix=" px",
+        ),
+        EffectSetting(
+            key="animate_segment_length",
+            label="Segment length",
+            kind="int",
+            default=14,
+            minimum=2,
+            maximum=100,
+            step=1,
+            suffix=" px",
+        ),
+    )
 
     def _draw_segment_line(
         self,

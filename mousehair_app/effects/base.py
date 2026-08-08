@@ -1,4 +1,27 @@
-"""Base interfaces for Mousehair visual effects."""
+"""Base interfaces and settings metadata for Mousehair visual effects."""
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class EffectSetting:
+    """Describe one user-configurable setting belonging to an effect.
+
+    The Effects Engine uses these descriptors to construct settings controls
+    without the main Mousehair dialog needing effect-specific knowledge.
+    """
+
+    key: str
+    label: str
+    kind: str
+    default: object
+
+    minimum: float | int | None = None
+    maximum: float | int | None = None
+    step: float | int | None = None
+
+    suffix: str = ""
+    decimals: int = 0
 
 
 class CrosshairEffect:
@@ -7,9 +30,8 @@ class CrosshairEffect:
     name = "base"
     display_name = "Base effect"
 
-    # Settings UI grouping. Existing controls currently fall into either the
-    # segmented-animation family or the arrow family.
-    control_family = "none"
+    # Each effect may expose its own settings descriptors.
+    settings = ()
 
     def __init__(self, host):
         self.host = host

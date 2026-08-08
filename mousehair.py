@@ -343,6 +343,8 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             'animate_speed': 180,
             'animate_spacing': 32,
             'animate_segment_length': 14,
+            'pulse_strength': 0.15,
+            'pulse_period': 1.5,
             'arrow_first_offset': 20,
             'arrow_spacing': 40,
             'arrow_length': 14,
@@ -372,6 +374,8 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         self.animate_speed = defaults['animate_speed']
         self.animate_spacing = defaults['animate_spacing']
         self.animate_segment_length = defaults['animate_segment_length']
+        self.pulse_strength = defaults['pulse_strength']
+        self.pulse_period = defaults['pulse_period']
         self.arrow_first_offset = defaults['arrow_first_offset']
         self.arrow_spacing = defaults['arrow_spacing']
         self.arrow_length = defaults['arrow_length']
@@ -462,6 +466,8 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             self.animate_speed = int(data.get('animate_speed', self.animate_speed))
             self.animate_spacing = int(data.get('animate_spacing', self.animate_spacing))
             self.animate_segment_length = int(data.get('animate_segment_length', self.animate_segment_length))
+            self.pulse_strength = float(data.get('pulse_strength', self.pulse_strength))
+            self.pulse_period = float(data.get('pulse_period', self.pulse_period))
             self.arrow_first_offset = int(data.get('arrow_first_offset', self.arrow_first_offset))
             self.arrow_spacing = int(data.get('arrow_spacing', self.arrow_spacing))
             self.arrow_length = int(data.get('arrow_length', self.arrow_length))
@@ -503,6 +509,8 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
                 'animate_speed': self.animate_speed,
                 'animate_spacing': self.animate_spacing,
                 'animate_segment_length': self.animate_segment_length,
+                'pulse_strength': self.pulse_strength,
+                'pulse_period': self.pulse_period,
                 'arrow_first_offset': self.arrow_first_offset,
                 'arrow_spacing': self.arrow_spacing,
                 'arrow_length': self.arrow_length,

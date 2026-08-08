@@ -4,6 +4,7 @@ import unittest
 
 from mousehair_app.effects import (
     ArrowCrosshairEffect,
+    PulseCrosshairEffect,
     SlidingCrosshairEffect,
     StaticCrosshairEffect,
 )
@@ -307,9 +308,17 @@ class EffectMetadataTests(unittest.TestCase):
             SlidingCrosshairEffect.display_name,
             "Sliding inward",
         )
+
         self.assertEqual(
-            SlidingCrosshairEffect.control_family,
-            "segments",
+            [
+                setting.key
+                for setting in SlidingCrosshairEffect.settings
+            ],
+            [
+                "animate_speed",
+                "animate_spacing",
+                "animate_segment_length",
+            ],
         )
 
     def test_arrow_metadata(self):
@@ -317,30 +326,53 @@ class EffectMetadataTests(unittest.TestCase):
             ArrowCrosshairEffect.display_name,
             "Direction arrows",
         )
+
         self.assertEqual(
-            ArrowCrosshairEffect.control_family,
-            "arrows",
+            [
+                setting.key
+                for setting in ArrowCrosshairEffect.settings
+            ],
+            [
+                "arrow_first_offset",
+                "arrow_spacing",
+                "arrow_length",
+                "arrow_width",
+                "arrow_border_over_line",
+            ],
         )
 
 
 class PulseEffectTests(unittest.TestCase):
 
     def test_pulse_effect_metadata(self):
-        from mousehair_app.effects import PulseCrosshairEffect
-
-        self.assertEqual(
-            PulseCrosshairEffect.name,
-            "pulse",
-        )
-
         self.assertEqual(
             PulseCrosshairEffect.display_name,
             "Pulse",
         )
 
         self.assertEqual(
-            PulseCrosshairEffect.control_family,
-            "none",
+            [
+                setting.key
+                for setting in PulseCrosshairEffect.settings
+            ],
+            [
+                "pulse_strength",
+                "pulse_period",
+            ],
+        )
+
+    def test_pulse_settings_metadata(self):
+        from mousehair_app.effects import PulseCrosshairEffect
+
+        self.assertEqual(
+            [
+                setting.key
+                for setting in PulseCrosshairEffect.settings
+            ],
+            [
+                "pulse_strength",
+                "pulse_period",
+            ],
         )
 
     def test_pulse_scale_stays_in_expected_range(self):

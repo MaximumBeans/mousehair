@@ -4,7 +4,7 @@ import math
 
 from PyQt5 import QtGui
 
-from .base import CrosshairEffect
+from .base import CrosshairEffect, EffectSetting
 
 
 class PulseCrosshairEffect(CrosshairEffect):
@@ -12,7 +12,30 @@ class PulseCrosshairEffect(CrosshairEffect):
 
     name = "pulse"
     display_name = "Pulse"
-    control_family = "none"
+
+    settings = (
+        EffectSetting(
+            key="pulse_strength",
+            label="Pulse strength",
+            kind="float",
+            default=0.15,
+            minimum=0.0,
+            maximum=0.75,
+            step=0.05,
+            decimals=2,
+        ),
+        EffectSetting(
+            key="pulse_period",
+            label="Pulse period",
+            kind="float",
+            default=1.5,
+            minimum=0.25,
+            maximum=10.0,
+            step=0.25,
+            decimals=2,
+            suffix=" s",
+        ),
+    )
 
     def _pulse_scale(self):
         """Return a smooth thickness multiplier.
@@ -22,13 +45,57 @@ class PulseCrosshairEffect(CrosshairEffect):
         """
         phase = float(self.host.animation_phase)
 
-        # One complete pulse every 120 phase units.
+        # animation_phase advances using Mousehair's animation-speed
+        # clock. Convert the configured period into the equivalent phase span.
+        pulse_period = max(
+            0.05,
+            float(
+                getattr(
+                    self.host,
+                    "pulse_period",
+                    1.5,
+                )
+            ),
+        )
+
+        animation_speed = max(
+            1.0,
+            float(
+                getattr(
+                    self.host,
+                    "animate_speed",
+                    180.0,
+                )
+            ),
+        )
+
+        phase_span = (
+            pulse_period
+            * animation_speed
+        )
+
         radians = (
-            phase / 120.0
+            phase / phase_span
         ) * math.tau
 
-        # Thickness varies between 85% and 115% of the configured value.
-        return 1.0 + 0.15 * math.sin(radians)
+        strength = max(
+            0.0,
+            min(
+                0.95,
+                float(
+                    getattr(
+                        self.host,
+                        "pulse_strength",
+                        0.15,
+                    )
+                ),
+            ),
+        )
+
+        return (
+            1.0
+            + strength * math.sin(radians)
+        )
 
     def _draw_lines(
         self,

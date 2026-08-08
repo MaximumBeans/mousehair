@@ -2,7 +2,7 @@
 
 from PyQt5 import QtCore, QtGui
 
-from .base import CrosshairEffect
+from .base import CrosshairEffect, EffectSetting
 
 
 class ArrowCrosshairEffect(CrosshairEffect):
@@ -10,7 +10,55 @@ class ArrowCrosshairEffect(CrosshairEffect):
 
     name = "arrows"
     display_name = "Direction arrows"
-    control_family = "arrows"
+
+    settings = (
+        EffectSetting(
+            key="arrow_first_offset",
+            label="First arrow at",
+            kind="int",
+            default=20,
+            minimum=0,
+            maximum=500,
+            step=1,
+            suffix=" px",
+        ),
+        EffectSetting(
+            key="arrow_spacing",
+            label="Arrow spacing",
+            kind="int",
+            default=40,
+            minimum=1,
+            maximum=500,
+            step=1,
+            suffix=" px",
+        ),
+        EffectSetting(
+            key="arrow_length",
+            label="Arrow length",
+            kind="int",
+            default=14,
+            minimum=2,
+            maximum=200,
+            step=1,
+            suffix=" px",
+        ),
+        EffectSetting(
+            key="arrow_width",
+            label="Arrow width",
+            kind="int",
+            default=12,
+            minimum=2,
+            maximum=200,
+            step=1,
+            suffix=" px",
+        ),
+        EffectSetting(
+            key="arrow_border_over_line",
+            label="Draw arrow border over line",
+            kind="bool",
+            default=True,
+        ),
+    )
 
     def _draw_arrow_line(
         self,
