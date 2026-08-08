@@ -1,10 +1,11 @@
-"""Tests for Mousehair's crosshair renderer registry."""
+"""Tests for Mousehair's Effects Engine selection and caching."""
 
 import unittest
 
 from mousehair_app.renderer import RenderPipelineMixin
 from mousehair_app.effects import (
     ArrowCrosshairEffect,
+    PulseCrosshairEffect,
     SlidingCrosshairEffect,
     StaticCrosshairEffect,
 )
@@ -13,17 +14,23 @@ from mousehair_app.effects import (
 class DummyRendererHost(RenderPipelineMixin):
     """Minimal RenderPipelineMixin host for selection tests."""
 
-    def __init__(self, animate_enabled, animation_style):
+    def __init__(
+        self,
+        *,
+        animation_style,
+        animate_enabled=True,
+    ):
+        # animate_enabled remains available for backwards compatibility but is
+        # no longer used by the renderer dispatcher.
         self.animate_enabled = animate_enabled
         self.animation_style = animation_style
 
 
 class RendererSelectionTests(unittest.TestCase):
 
-    def test_animation_disabled_means_static(self):
+    def test_static_renderer_selected(self):
         host = DummyRendererHost(
-            animate_enabled=False,
-            animation_style="arrows",
+            animation_style="static",
         )
 
         self.assertEqual(
@@ -33,7 +40,6 @@ class RendererSelectionTests(unittest.TestCase):
 
     def test_sliding_renderer_selected(self):
         host = DummyRendererHost(
-            animate_enabled=True,
             animation_style="sliding",
         )
 
@@ -44,7 +50,6 @@ class RendererSelectionTests(unittest.TestCase):
 
     def test_arrow_renderer_selected(self):
         host = DummyRendererHost(
-            animate_enabled=True,
             animation_style="arrows",
         )
 
@@ -53,9 +58,18 @@ class RendererSelectionTests(unittest.TestCase):
             "arrows",
         )
 
+    def test_pulse_renderer_selected(self):
+        host = DummyRendererHost(
+            animation_style="pulse",
+        )
+
+        self.assertEqual(
+            host._crosshair_renderer_name(),
+            "pulse",
+        )
+
     def test_missing_style_defaults_to_static(self):
         host = DummyRendererHost(
-            animate_enabled=True,
             animation_style=None,
         )
 
@@ -64,10 +78,34 @@ class RendererSelectionTests(unittest.TestCase):
             "static",
         )
 
+    def test_unknown_style_defaults_to_static(self):
+        host = DummyRendererHost(
+            animation_style="definitely-not-an-effect",
+        )
+
+        self.assertEqual(
+            host._crosshair_renderer_name(),
+            "static",
+        )
+
+    def test_registry_contains_existing_renderers(self):
+        host = DummyRendererHost(
+            animation_style="static",
+        )
+
+        self.assertEqual(
+            set(host._crosshair_renderers()),
+            {
+                "static",
+                "sliding",
+                "arrows",
+                "pulse",
+            },
+        )
+
     def test_registry_maps_names_to_effect_classes(self):
         host = DummyRendererHost(
-            animate_enabled=False,
-            animation_style=None,
+            animation_style="static",
         )
 
         registry = host._crosshair_renderers()
@@ -87,27 +125,16 @@ class RendererSelectionTests(unittest.TestCase):
             ArrowCrosshairEffect,
         )
 
-    def test_registry_contains_existing_renderers(self):
-        host = DummyRendererHost(
-            animate_enabled=False,
-            animation_style=None,
+        self.assertIs(
+            registry["pulse"],
+            PulseCrosshairEffect,
         )
-
-        self.assertEqual(
-            set(host._crosshair_renderers()),
-            {"static", "sliding", "arrows", "pulse"},
-        )
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class EffectInstanceCacheTests(unittest.TestCase):
 
     def test_effect_instances_are_reused(self):
         host = DummyRendererHost(
-            animate_enabled=True,
             animation_style="pulse",
         )
 
@@ -126,7 +153,6 @@ class EffectInstanceCacheTests(unittest.TestCase):
 
     def test_effect_instances_use_host(self):
         host = DummyRendererHost(
-            animate_enabled=True,
             animation_style="static",
         )
 
@@ -137,3 +163,7 @@ class EffectInstanceCacheTests(unittest.TestCase):
                 effect.host,
                 host,
             )
+
+
+if __name__ == "__main__":
+    unittest.main()

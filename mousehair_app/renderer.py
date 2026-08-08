@@ -81,13 +81,20 @@ class RenderPipelineMixin:
         painter.drawEllipse(ring_rect)
 
     def _crosshair_renderer_name(self):
-        """Return the renderer selected by the current settings."""
-        if not self.animate_enabled:
-            return "static"
+        """Return the currently selected Effects Engine renderer.
 
-        return str(
+        ``animation_style`` is retained as the configuration key for backwards
+        compatibility, but it now represents the complete crosshair effect
+        rather than only animated styles.
+        """
+        effect_name = str(
             self.animation_style or "static"
         ).strip().lower()
+
+        if effect_name not in self._crosshair_renderers():
+            return "static"
+
+        return effect_name
 
     def _crosshair_renderers(self):
         """Return Mousehair's built-in Effects Engine class registry."""

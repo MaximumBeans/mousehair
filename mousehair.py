@@ -402,8 +402,32 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             self.fade_out_delay = int(data.get('fade_out_delay', self.fade_out_delay))
             self.fade_in_delay = int(data.get('fade_in_delay', self.fade_in_delay))
             self.fade_duration = int(data.get('fade_duration', self.fade_duration))
-            self.animate_enabled = bool(data.get('animate_enabled', self.animate_enabled))
-            self.animation_style = str(data.get('animation_style', self.animation_style))
+            self.animate_enabled = bool(
+                data.get(
+                    'animate_enabled',
+                    self.animate_enabled,
+                )
+            )
+
+            self.animation_style = str(
+                data.get(
+                    'animation_style',
+                    self.animation_style,
+                )
+            )
+
+            # Compatibility with configurations created before the Effects
+            # Engine. Historically animate_enabled=False overrode whichever
+            # animation_style happened to be stored.
+            if not self.animate_enabled:
+                self.animation_style = "static"
+
+            # The Effects Engine selector is now authoritative. Keep the legacy
+            # flag derived from the selected effect so older configuration
+            # readers continue to see a sensible value.
+            self.animate_enabled = (
+                self.animation_style != "static"
+            )
             self.animate_speed = int(data.get('animate_speed', self.animate_speed))
             self.animate_spacing = int(data.get('animate_spacing', self.animate_spacing))
             self.animate_segment_length = int(data.get('animate_segment_length', self.animate_segment_length))
@@ -560,24 +584,20 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         fade_duration_spin.setRange(0, 5000)
         fade_duration_spin.setValue(self.fade_duration)
 
-        animate_chk = QtWidgets.QCheckBox("Enable crawling line animation")
-        animate_chk.setChecked(self.animate_enabled)
         animation_style_combo = QtWidgets.QComboBox()
 
-        # Populate the selector from the Effects Engine instead of hard-coding
-        # effect names in the settings dialog. Static remains represented by
-        # the "Enable crawling line animation" checkbox for compatibility with
-        # existing configuration files.
+        # The Effects Engine owns the available choices and their user-facing
+        # names. Static is now an ordinary effect rather than a separate
+        # animation-disabled state.
         for effect_class in self._crosshair_effect_classes():
-            if effect_class.name == "static":
-                continue
-
             animation_style_combo.addItem(
                 effect_class.display_name,
                 effect_class.name,
             )
 
-        animation_style_index = animation_style_combo.findData(self.animation_style)
+        animation_style_index = animation_style_combo.findData(
+            self.animation_style
+        )
         if animation_style_index >= 0:
             animation_style_combo.setCurrentIndex(animation_style_index)
 
@@ -635,8 +655,7 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         layout.addRow("Fade out delay:", fade_out_spin)
         layout.addRow("Fade in delay:", fade_in_spin)
         layout.addRow("Fade duration:", fade_duration_spin)
-        layout.addRow(animate_chk)
-        layout.addRow("Animation style:", animation_style_combo)
+        layout.addRow("Crosshair effect:", animation_style_combo)
         layout.addRow("Animation speed:", animate_speed_spin)
         layout.addRow("Animation spacing:", animate_spacing_spin)
         layout.addRow("Animation segment length:", animate_segment_spin)
@@ -744,8 +763,16 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             self.fade_out_delay = fade_out_spin.value()
             self.fade_in_delay = fade_in_spin.value()
             self.fade_duration = fade_duration_spin.value()
-            self.animate_enabled = animate_chk.isChecked()
-            self.animation_style = animation_style_combo.currentData()
+            self.animation_style = (
+                animation_style_combo.currentData()
+                or "static"
+            )
+
+            # Retain the old configuration field for backwards compatibility.
+            # It is now derived from the selected Effects Engine renderer.
+            self.animate_enabled = (
+                self.animation_style != "static"
+            )
             self.animate_speed = animate_speed_spin.value()
             self.animate_spacing = animate_spacing_spin.value()
             self.animate_segment_length = animate_segment_spin.value()
