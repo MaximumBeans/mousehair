@@ -167,3 +167,32 @@ class EffectInstanceCacheTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CanonicalEffectSettingTests(unittest.TestCase):
+
+    def test_crosshair_effect_takes_precedence_over_legacy_style(self):
+        host = DummyRendererHost(
+            animation_style="sliding",
+        )
+
+        host.crosshair_effect = "pulse"
+
+        self.assertEqual(
+            host._crosshair_renderer_name(),
+            "pulse",
+        )
+
+    def test_legacy_animation_style_remains_a_fallback(self):
+        host = DummyRendererHost(
+            animation_style="arrows",
+        )
+
+        self.assertFalse(
+            hasattr(host, "crosshair_effect")
+        )
+
+        self.assertEqual(
+            host._crosshair_renderer_name(),
+            "arrows",
+        )

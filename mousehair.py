@@ -334,6 +334,10 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             'fade_out_delay': 500,
             'fade_in_delay': 0,
             'fade_duration': 300,
+            # ``crosshair_effect`` is the canonical Effects Engine
+            # setting. The two older animation fields are retained so old
+            # configuration files can still be interpreted correctly.
+            'crosshair_effect': 'static',
             'animate_enabled': False,
             'animation_style': 'sliding',
             'animate_speed': 180,
@@ -359,6 +363,10 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         self.fade_out_delay = defaults['fade_out_delay']
         self.fade_in_delay = defaults['fade_in_delay']
         self.fade_duration = defaults['fade_duration']
+        self.crosshair_effect = defaults['crosshair_effect']
+
+        # Legacy aliases. These remain available while older code and config
+        # files are phased out.
         self.animate_enabled = defaults['animate_enabled']
         self.animation_style = defaults['animation_style']
         self.animate_speed = defaults['animate_speed']
@@ -402,31 +410,54 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             self.fade_out_delay = int(data.get('fade_out_delay', self.fade_out_delay))
             self.fade_in_delay = int(data.get('fade_in_delay', self.fade_in_delay))
             self.fade_duration = int(data.get('fade_duration', self.fade_duration))
-            self.animate_enabled = bool(
+            legacy_animate_enabled = bool(
                 data.get(
                     'animate_enabled',
                     self.animate_enabled,
                 )
             )
 
-            self.animation_style = str(
+            legacy_animation_style = str(
                 data.get(
                     'animation_style',
                     self.animation_style,
                 )
             )
 
-            # Compatibility with configurations created before the Effects
-            # Engine. Historically animate_enabled=False overrode whichever
-            # animation_style happened to be stored.
-            if not self.animate_enabled:
-                self.animation_style = "static"
+            if 'crosshair_effect' in data:
+                # New-format configuration.
+                requested_effect = str(
+                    data.get(
+                        'crosshair_effect',
+                        self.crosshair_effect,
+                    )
+                )
+            else:
+                # Migration from the pre-Effects-Engine configuration model.
+                # animate_enabled=False historically meant Static regardless
+                # of the stored animation_style value.
+                requested_effect = (
+                    legacy_animation_style
+                    if legacy_animate_enabled
+                    else "static"
+                )
 
-            # The Effects Engine selector is now authoritative. Keep the legacy
-            # flag derived from the selected effect so older configuration
-            # readers continue to see a sensible value.
+            requested_effect = (
+                requested_effect
+                .strip()
+                .lower()
+            )
+
+            if requested_effect not in self._crosshair_renderers():
+                requested_effect = "static"
+
+            self.crosshair_effect = requested_effect
+
+            # Keep the old attributes as derived aliases so older code remains
+            # harmless while the migration is completed incrementally.
+            self.animation_style = self.crosshair_effect
             self.animate_enabled = (
-                self.animation_style != "static"
+                self.crosshair_effect != "static"
             )
             self.animate_speed = int(data.get('animate_speed', self.animate_speed))
             self.animate_spacing = int(data.get('animate_spacing', self.animate_spacing))
@@ -462,8 +493,13 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
                 'fade_out_delay': self.fade_out_delay,
                 'fade_in_delay': self.fade_in_delay,
                 'fade_duration': self.fade_duration,
-                'animate_enabled': self.animate_enabled,
-                'animation_style': self.animation_style,
+                'crosshair_effect': self.crosshair_effect,
+
+                # Compatibility fields for older Mousehair builds.
+                'animate_enabled': (
+                    self.crosshair_effect != 'static'
+                ),
+                'animation_style': self.crosshair_effect,
                 'animate_speed': self.animate_speed,
                 'animate_spacing': self.animate_spacing,
                 'animate_segment_length': self.animate_segment_length,
@@ -596,7 +632,7 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             )
 
         animation_style_index = animation_style_combo.findData(
-            self.animation_style
+            self.crosshair_effect
         )
         if animation_style_index >= 0:
             animation_style_combo.setCurrentIndex(animation_style_index)
@@ -763,15 +799,16 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             self.fade_out_delay = fade_out_spin.value()
             self.fade_in_delay = fade_in_spin.value()
             self.fade_duration = fade_duration_spin.value()
-            self.animation_style = (
+            self.crosshair_effect = (
                 animation_style_combo.currentData()
                 or "static"
             )
 
-            # Retain the old configuration field for backwards compatibility.
-            # It is now derived from the selected Effects Engine renderer.
+            # Legacy aliases remain derived from the canonical Effects Engine
+            # setting until they can be removed in a future config migration.
+            self.animation_style = self.crosshair_effect
             self.animate_enabled = (
-                self.animation_style != "static"
+                self.crosshair_effect != "static"
             )
             self.animate_speed = animate_speed_spin.value()
             self.animate_spacing = animate_spacing_spin.value()

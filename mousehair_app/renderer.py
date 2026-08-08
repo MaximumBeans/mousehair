@@ -88,7 +88,16 @@ class RenderPipelineMixin:
         rather than only animated styles.
         """
         effect_name = str(
-            self.animation_style or "static"
+            getattr(
+                self,
+                "crosshair_effect",
+                getattr(
+                    self,
+                    "animation_style",
+                    "static",
+                ),
+            )
+            or "static"
         ).strip().lower()
 
         if effect_name not in self._crosshair_renderers():
