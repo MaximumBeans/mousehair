@@ -90,11 +90,39 @@ class RenderPipelineMixin:
         ).strip().lower()
 
     def _crosshair_renderers(self):
-        """Return Mousehair's built-in Effects Engine registry."""
+        """Return Mousehair's built-in Effects Engine class registry."""
         return {
             effect_class.name: effect_class
             for effect_class in self._crosshair_effect_classes()
         }
+
+    def _crosshair_effect_instances(self):
+        """Return one persistent instance of every built-in effect.
+
+        Paint events can occur many times per second. Effects are therefore
+        instantiated once for this overlay and then reused instead of creating
+        short-lived Python objects for every frame.
+
+        Persistent instances also give future effects somewhere appropriate to
+        keep lightweight animation state without leaking it into the main
+        Mousehair widget.
+        """
+        instances = getattr(
+            self,
+            "_effect_instance_cache",
+            None,
+        )
+
+        if instances is None:
+            instances = {
+                name: effect_class(self)
+                for name, effect_class
+                in self._crosshair_renderers().items()
+            }
+
+            self._effect_instance_cache = instances
+
+        return instances
 
     def _crosshair_effect_classes(self):
         """Return built-in effects in their preferred UI order."""
@@ -106,15 +134,13 @@ class RenderPipelineMixin:
         )
 
     def draw_crosshair(self, painter, mx, my, outer_pen, inner_pen):
-        """Instantiate and render the currently selected crosshair effect."""
-        effects = self._crosshair_renderers()
+        """Render the selected effect using its persistent instance."""
+        effects = self._crosshair_effect_instances()
 
-        effect_class = effects.get(
+        effect = effects.get(
             self._crosshair_renderer_name(),
-            StaticCrosshairEffect,
+            effects["static"],
         )
-
-        effect = effect_class(self)
 
         effect.render(
             painter,

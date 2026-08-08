@@ -101,3 +101,39 @@ class RendererSelectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EffectInstanceCacheTests(unittest.TestCase):
+
+    def test_effect_instances_are_reused(self):
+        host = DummyRendererHost(
+            animate_enabled=True,
+            animation_style="pulse",
+        )
+
+        first = host._crosshair_effect_instances()
+        second = host._crosshair_effect_instances()
+
+        self.assertIs(
+            first,
+            second,
+        )
+
+        self.assertIs(
+            first["pulse"],
+            second["pulse"],
+        )
+
+    def test_effect_instances_use_host(self):
+        host = DummyRendererHost(
+            animate_enabled=True,
+            animation_style="static",
+        )
+
+        instances = host._crosshair_effect_instances()
+
+        for effect in instances.values():
+            self.assertIs(
+                effect.host,
+                host,
+            )
