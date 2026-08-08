@@ -645,47 +645,11 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         if animation_style_index >= 0:
             animation_style_combo.setCurrentIndex(animation_style_index)
 
-        animate_speed_spin = QtWidgets.QSpinBox()
-        animate_speed_spin.setRange(10, 1000)
-        animate_speed_spin.setValue(self.animate_speed)
-        animate_speed_spin.setSuffix(" px/s")
-
-        animate_spacing_spin = QtWidgets.QSpinBox()
-        animate_spacing_spin.setRange(8, 200)
-        animate_spacing_spin.setValue(self.animate_spacing)
-        animate_spacing_spin.setSuffix(" px")
-
-        animate_segment_spin = QtWidgets.QSpinBox()
-        animate_segment_spin.setRange(2, 100)
-        animate_segment_spin.setValue(self.animate_segment_length)
-        animate_segment_spin.setSuffix(" px")
-
-        arrow_first_spin = QtWidgets.QSpinBox()
-        arrow_first_spin.setRange(0, 500)
-        arrow_first_spin.setValue(self.arrow_first_offset)
-        arrow_first_spin.setSuffix(" px")
-
-        arrow_spacing_spin = QtWidgets.QSpinBox()
-        arrow_spacing_spin.setRange(1, 500)
-        arrow_spacing_spin.setValue(self.arrow_spacing)
-        arrow_spacing_spin.setSuffix(" px")
-
-        arrow_length_spin = QtWidgets.QSpinBox()
-        arrow_length_spin.setRange(2, 200)
-        arrow_length_spin.setValue(self.arrow_length)
-        arrow_length_spin.setSuffix(" px")
-
-        arrow_width_spin = QtWidgets.QSpinBox()
-        arrow_width_spin.setRange(2, 200)
-        arrow_width_spin.setValue(self.arrow_width)
-        arrow_width_spin.setSuffix(" px")
+        # ------------------------------------------------------------
+        # General settings rows
+        # ------------------------------------------------------------
 
         layout.addRow(start_with_system_chk)
-
-        arrow_border_over_line_chk = QtWidgets.QCheckBox(
-            "Draw arrow border over line"
-        )
-        arrow_border_over_line_chk.setChecked(self.arrow_border_over_line)
         layout.addRow("Alpha:", alpha_spin)
         layout.addRow("Gap:", gap_spin)
         layout.addRow("Outer thickness:", outer_thick_spin)
@@ -700,76 +664,219 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         layout.addRow("Fade in delay:", fade_in_spin)
         layout.addRow("Fade duration:", fade_duration_spin)
         layout.addRow("Crosshair effect:", animation_style_combo)
-        layout.addRow("Animation speed:", animate_speed_spin)
-        layout.addRow("Animation spacing:", animate_spacing_spin)
-        layout.addRow("Animation segment length:", animate_segment_spin)
-        layout.addRow("First arrow at:", arrow_first_spin)
-        layout.addRow("Arrow spacing:", arrow_spacing_spin)
-        layout.addRow("Arrow length:", arrow_length_spin)
-        layout.addRow("Arrow width:", arrow_width_spin)
-        layout.addRow(arrow_border_over_line_chk)
 
-        def update_effect_controls():
-            effect_name = animation_style_combo.currentData()
+        # ------------------------------------------------------------
+        # Effects Engine generated settings panel
+        # ------------------------------------------------------------
+
+        effect_settings_box = QtWidgets.QGroupBox(
+            "Effect settings"
+        )
+
+        effect_settings_layout = QtWidgets.QFormLayout(
+            effect_settings_box
+        )
+
+        layout.addRow(effect_settings_box)
+
+        # Keep pending values for every effect for the lifetime of the dialog.
+        # This means a user can edit Pulse, switch to Arrows, then return to
+        # Pulse without losing unsaved changes.
+        effect_pending_values = {}
+
+        for effect_class in self._crosshair_effect_classes():
+            for setting in effect_class.settings:
+                effect_pending_values.setdefault(
+                    setting.key,
+                    getattr(
+                        self,
+                        setting.key,
+                        setting.default,
+                    ),
+                )
+
+        effect_setting_widgets = {}
+
+        def effect_widget_value(widget, setting):
+            """Return the Python value represented by an effect widget."""
+            if setting.kind == "bool":
+                return widget.isChecked()
+
+            if setting.kind == "int":
+                return int(widget.value())
+
+            if setting.kind == "float":
+                return float(widget.value())
+
+            raise ValueError(
+                f"Unsupported effect setting kind: {setting.kind}"
+            )
+
+        def capture_effect_settings():
+            """Preserve currently displayed effect values."""
+            for key, item in effect_setting_widgets.items():
+                setting, widget = item
+
+                effect_pending_values[key] = (
+                    effect_widget_value(
+                        widget,
+                        setting,
+                    )
+                )
+
+        def clear_effect_settings():
+            """Remove all generated controls from the panel."""
+            while effect_settings_layout.rowCount():
+                effect_settings_layout.removeRow(0)
+
+            effect_setting_widgets.clear()
+
+        def create_effect_setting_widget(setting):
+            """Create a Qt control described by one EffectSetting."""
+            value = effect_pending_values.get(
+                setting.key,
+                setting.default,
+            )
+
+            if setting.kind == "bool":
+                widget = QtWidgets.QCheckBox()
+                widget.setChecked(bool(value))
+                return widget
+
+            if setting.kind == "int":
+                widget = QtWidgets.QSpinBox()
+
+                if setting.minimum is not None:
+                    minimum = int(setting.minimum)
+                else:
+                    minimum = -2147483647
+
+                if setting.maximum is not None:
+                    maximum = int(setting.maximum)
+                else:
+                    maximum = 2147483647
+
+                widget.setRange(
+                    minimum,
+                    maximum,
+                )
+
+                if setting.step is not None:
+                    widget.setSingleStep(
+                        int(setting.step)
+                    )
+
+                if setting.suffix:
+                    widget.setSuffix(
+                        setting.suffix
+                    )
+
+                widget.setValue(
+                    int(value)
+                )
+
+                return widget
+
+            if setting.kind == "float":
+                widget = QtWidgets.QDoubleSpinBox()
+
+                if setting.minimum is not None:
+                    minimum = float(setting.minimum)
+                else:
+                    minimum = -1000000.0
+
+                if setting.maximum is not None:
+                    maximum = float(setting.maximum)
+                else:
+                    maximum = 1000000.0
+
+                widget.setRange(
+                    minimum,
+                    maximum,
+                )
+
+                widget.setDecimals(
+                    max(
+                        0,
+                        int(setting.decimals),
+                    )
+                )
+
+                if setting.step is not None:
+                    widget.setSingleStep(
+                        float(setting.step)
+                    )
+
+                if setting.suffix:
+                    widget.setSuffix(
+                        setting.suffix
+                    )
+
+                widget.setValue(
+                    float(value)
+                )
+
+                return widget
+
+            raise ValueError(
+                f"Unsupported effect setting kind: {setting.kind}"
+            )
+
+        def rebuild_effect_settings():
+            """Build controls declared by the selected effect."""
+            capture_effect_settings()
+            clear_effect_settings()
+
+            effect_name = (
+                animation_style_combo.currentData()
+                or "static"
+            )
 
             effect_class = self._crosshair_renderers().get(
                 effect_name
             )
 
-            control_family = (
-                effect_class.control_family
+            settings = (
+                effect_class.settings
                 if effect_class is not None
-                else "none"
+                else ()
             )
 
-            segment_controls = (
-                control_family == "segments"
+            for setting in settings:
+                widget = create_effect_setting_widget(
+                    setting
+                )
+
+                effect_setting_widgets[
+                    setting.key
+                ] = (
+                    setting,
+                    widget,
+                )
+
+                if setting.kind == "bool":
+                    widget.setText(
+                        setting.label
+                    )
+
+                    effect_settings_layout.addRow(
+                        widget
+                    )
+                else:
+                    effect_settings_layout.addRow(
+                        f"{setting.label}:",
+                        widget,
+                    )
+
+            effect_settings_box.setVisible(
+                bool(settings)
             )
 
-            arrow_controls = (
-                control_family == "arrows"
-            )
+        animation_style_combo.currentIndexChanged.connect(
+            rebuild_effect_settings
+        )
 
-            animate_speed_spin.setVisible(segment_controls)
-            animate_spacing_spin.setVisible(segment_controls)
-            animate_segment_spin.setVisible(segment_controls)
-
-            layout.labelForField(
-                animate_speed_spin
-            ).setVisible(segment_controls)
-
-            layout.labelForField(
-                animate_spacing_spin
-            ).setVisible(segment_controls)
-
-            layout.labelForField(
-                animate_segment_spin
-            ).setVisible(segment_controls)
-
-            arrow_first_spin.setVisible(arrow_controls)
-            arrow_spacing_spin.setVisible(arrow_controls)
-            arrow_length_spin.setVisible(arrow_controls)
-            arrow_width_spin.setVisible(arrow_controls)
-            arrow_border_over_line_chk.setVisible(arrow_controls)
-
-            layout.labelForField(
-                arrow_first_spin
-            ).setVisible(arrow_controls)
-
-            layout.labelForField(
-                arrow_spacing_spin
-            ).setVisible(arrow_controls)
-
-            layout.labelForField(
-                arrow_length_spin
-            ).setVisible(arrow_controls)
-
-            layout.labelForField(
-                arrow_width_spin
-            ).setVisible(arrow_controls)
-
-        animation_style_combo.currentIndexChanged.connect(update_effect_controls)
-        update_effect_controls()
+        rebuild_effect_settings()
 
         def update_ring_controls():
             ring_selected = ring_chk.isChecked()
@@ -818,14 +925,17 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             self.animate_enabled = (
                 self.crosshair_effect != "static"
             )
-            self.animate_speed = animate_speed_spin.value()
-            self.animate_spacing = animate_spacing_spin.value()
-            self.animate_segment_length = animate_segment_spin.value()
-            self.arrow_first_offset = arrow_first_spin.value()
-            self.arrow_spacing = arrow_spacing_spin.value()
-            self.arrow_length = arrow_length_spin.value()
-            self.arrow_width = arrow_width_spin.value()
-            self.arrow_border_over_line = arrow_border_over_line_chk.isChecked()
+            # Capture the currently visible effect before applying all pending
+            # Effects Engine values. Settings belonging to other effects are
+            # preserved as well, even if they are not currently selected.
+            capture_effect_settings()
+
+            for key, value in effect_pending_values.items():
+                setattr(
+                    self,
+                    key,
+                    value,
+                )
 
             self.save_settings()
 
