@@ -4,6 +4,7 @@ from PyQt5 import QtCore, QtGui
 
 from .effects import (
     ArrowCrosshairEffect,
+    PulseCrosshairEffect,
     SlidingCrosshairEffect,
     StaticCrosshairEffect,
 )
@@ -101,6 +102,7 @@ class RenderPipelineMixin:
             StaticCrosshairEffect,
             SlidingCrosshairEffect,
             ArrowCrosshairEffect,
+            PulseCrosshairEffect,
         )
 
     def draw_crosshair(self, painter, mx, my, outer_pen, inner_pen):

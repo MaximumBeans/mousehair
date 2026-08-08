@@ -321,3 +321,51 @@ class EffectMetadataTests(unittest.TestCase):
             ArrowCrosshairEffect.control_family,
             "arrows",
         )
+
+
+class PulseEffectTests(unittest.TestCase):
+
+    def test_pulse_effect_metadata(self):
+        from mousehair_app.effects import PulseCrosshairEffect
+
+        self.assertEqual(
+            PulseCrosshairEffect.name,
+            "pulse",
+        )
+
+        self.assertEqual(
+            PulseCrosshairEffect.display_name,
+            "Pulse",
+        )
+
+        self.assertEqual(
+            PulseCrosshairEffect.control_family,
+            "none",
+        )
+
+    def test_pulse_scale_stays_in_expected_range(self):
+        from mousehair_app.effects import PulseCrosshairEffect
+
+        class PulseHost:
+            animation_phase = 0
+
+        host = PulseHost()
+        effect = PulseCrosshairEffect(host)
+
+        values = []
+
+        for phase in range(0, 241, 10):
+            host.animation_phase = phase
+            values.append(
+                effect._pulse_scale()
+            )
+
+        self.assertGreaterEqual(
+            min(values),
+            0.85,
+        )
+
+        self.assertLessEqual(
+            max(values),
+            1.15,
+        )

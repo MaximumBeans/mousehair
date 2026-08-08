@@ -95,7 +95,7 @@ class RendererSelectionTests(unittest.TestCase):
 
         self.assertEqual(
             set(host._crosshair_renderers()),
-            {"static", "sliding", "arrows"},
+            {"static", "sliding", "arrows", "pulse"},
         )
 
 
