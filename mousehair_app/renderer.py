@@ -149,6 +149,47 @@ class RenderPipelineMixin:
             PulseCrosshairEffect,
         )
 
+    def draw_complications(
+        self,
+        painter,
+        mx,
+        my,
+    ):
+        """Draw enabled pointer-HUD complications."""
+        manager = getattr(
+            self,
+            "complications",
+            None,
+        )
+
+        if manager is None:
+            return
+
+        manager.update()
+
+        reticle = self._reticle_geometry()
+
+        geometry = {
+            "center_x": float(mx),
+            "center_y": float(my),
+            "ring_radius": (
+                reticle.ring_centreline_radius
+            ),
+            "ring_inner_edge": (
+                reticle.ring_inner_edge_radius
+            ),
+            "ring_outer_edge": (
+                reticle.ring_outer_edge_radius
+            ),
+        }
+
+        for complication in manager.enabled():
+            complication.draw(
+                painter,
+                geometry,
+                complication.placement,
+            )
+
     def draw_crosshair(self, painter, mx, my, outer_pen, inner_pen):
         """Render the selected effect using its persistent instance."""
         effects = self._crosshair_effect_instances()

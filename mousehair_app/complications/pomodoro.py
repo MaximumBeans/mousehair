@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 import time
 
+from PyQt5 import QtCore, QtGui
+
 from .base import (
     Complication,
     ComplicationSetting,
@@ -357,10 +359,243 @@ class PomodoroComplication(Complication):
         geometry,
         placement,
     ):
-        """Rendering will be added once compositor layering is wired.
+        """Draw the Pomodoro as a tomato-red clockwise progress ring.
 
-        The timer engine intentionally lands first.
+        The ring lives just inside the accessibility reticule. Its top marker
+        is a small vector tomato rather than a font glyph, so its appearance
+        does not depend on colour-emoji support.
         """
-        del painter
-        del geometry
-        del placement
+        snapshot = self.snapshot()
+
+        center_x = float(
+            geometry["center_x"]
+        )
+
+        center_y = float(
+            geometry["center_y"]
+        )
+
+        ring_radius = float(
+            geometry["ring_radius"]
+        )
+
+        reticle_inner_edge = float(
+            geometry["ring_inner_edge"]
+        )
+
+        # Leave a small breathing space between the accessibility reticule and
+        # the Pomodoro progress ring.
+        progress_width = 5.0
+        padding = 5.0
+
+        progress_radius = max(
+            8.0,
+            min(
+                ring_radius,
+                reticle_inner_edge
+                - padding
+                - progress_width / 2.0,
+            ),
+        )
+
+        diameter = (
+            progress_radius
+            * 2.0
+        )
+
+        arc_rect = QtCore.QRectF(
+            center_x - progress_radius,
+            center_y - progress_radius,
+            diameter,
+            diameter,
+        )
+
+        painter.save()
+
+        opacity = max(
+            0.0,
+            min(
+                1.0,
+                float(
+                    getattr(
+                        self.host,
+                        "current_alpha",
+                        1.0,
+                    )
+                ),
+            ),
+        )
+
+        # A very dark track gives the timer a complete-circle silhouette even
+        # before much progress has accumulated.
+        track_colour = QtGui.QColor(
+            "#401414"
+        )
+        track_colour.setAlphaF(
+            opacity * 0.70
+        )
+
+        track_pen = QtGui.QPen(
+            track_colour
+        )
+        track_pen.setWidthF(
+            progress_width
+        )
+        track_pen.setCapStyle(
+            QtCore.Qt.RoundCap
+        )
+
+        painter.setPen(
+            track_pen
+        )
+        painter.setBrush(
+            QtCore.Qt.NoBrush
+        )
+        painter.drawEllipse(
+            arc_rect
+        )
+
+        # Mousehair's Pomodoro identity: proper tomato red.
+        progress_colour = QtGui.QColor(
+            "#E53935"
+        )
+        progress_colour.setAlphaF(
+            opacity
+        )
+
+        progress_pen = QtGui.QPen(
+            progress_colour
+        )
+        progress_pen.setWidthF(
+            progress_width
+        )
+        progress_pen.setCapStyle(
+            QtCore.Qt.RoundCap
+        )
+
+        painter.setPen(
+            progress_pen
+        )
+
+        # QPainter uses sixteenths of a degree, with positive values travelling
+        # counter-clockwise. Start at 12 o'clock and use a negative span so
+        # Mousehair fills clockwise.
+        start_angle = (
+            90
+            * 16
+        )
+
+        span_angle = int(
+            -360
+            * 16
+            * snapshot.progress
+        )
+
+        if span_angle:
+            painter.drawArc(
+                arc_rect,
+                start_angle,
+                span_angle,
+            )
+
+        # ------------------------------------------------------------
+        # Tomato marker at 12 o'clock
+        # ------------------------------------------------------------
+
+        tomato_center_x = center_x
+
+        tomato_center_y = (
+            center_y
+            - progress_radius
+        )
+
+        tomato_radius = 7.0
+
+        tomato_rect = QtCore.QRectF(
+            tomato_center_x
+            - tomato_radius,
+            tomato_center_y
+            - tomato_radius,
+            tomato_radius * 2.0,
+            tomato_radius * 2.0,
+        )
+
+        tomato_colour = QtGui.QColor(
+            "#E53935"
+        )
+        tomato_colour.setAlphaF(
+            opacity
+        )
+
+        painter.setPen(
+            QtCore.Qt.NoPen
+        )
+        painter.setBrush(
+            tomato_colour
+        )
+        painter.drawEllipse(
+            tomato_rect
+        )
+
+        # Draw a small green crown/stem. Keeping this geometric means the icon
+        # remains crisp at any desktop scale.
+        leaf_colour = QtGui.QColor(
+            "#43A047"
+        )
+        leaf_colour.setAlphaF(
+            opacity
+        )
+
+        painter.setBrush(
+            leaf_colour
+        )
+
+        leaf_path = QtGui.QPainterPath()
+
+        leaf_path.moveTo(
+            tomato_center_x,
+            tomato_center_y - tomato_radius - 4.0,
+        )
+
+        leaf_path.lineTo(
+            tomato_center_x + 2.0,
+            tomato_center_y - 3.0,
+        )
+
+        leaf_path.lineTo(
+            tomato_center_x + 6.0,
+            tomato_center_y - 5.0,
+        )
+
+        leaf_path.lineTo(
+            tomato_center_x + 3.0,
+            tomato_center_y,
+        )
+
+        leaf_path.lineTo(
+            tomato_center_x,
+            tomato_center_y - 2.0,
+        )
+
+        leaf_path.lineTo(
+            tomato_center_x - 3.0,
+            tomato_center_y,
+        )
+
+        leaf_path.lineTo(
+            tomato_center_x - 6.0,
+            tomato_center_y - 5.0,
+        )
+
+        leaf_path.lineTo(
+            tomato_center_x - 2.0,
+            tomato_center_y - 3.0,
+        )
+
+        leaf_path.closeSubpath()
+
+        painter.drawPath(
+            leaf_path
+        )
+
+        painter.restore()

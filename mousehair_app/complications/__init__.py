@@ -5,6 +5,8 @@ from .base import (
     ComplicationSetting,
 )
 
+from .manager import ComplicationManager
+
 from .pomodoro import (
     PHASE_BREAK,
     PHASE_FOCUS,
@@ -28,6 +30,7 @@ from .placement import (
 )
 
 __all__ = [
+    "ComplicationManager",
     "PHASE_BREAK",
     "PHASE_FOCUS",
     "STATE_IDLE",

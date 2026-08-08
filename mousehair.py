@@ -12,6 +12,10 @@ from mousehair_app import (
     ReticleGeometry,
 )
 
+from mousehair_app.complications import (
+    ComplicationManager,
+)
+
 CONFIG_PATH = os.path.expanduser('~/.config/mousehair/config.json')
 
 class GlobalHotkey(QtCore.QObject):
@@ -155,6 +159,13 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         super().__init__()
         self.load_settings()
 
+        # Complications are persistent runtime objects. Timer state therefore
+        # survives ordinary repaint cycles rather than being recreated every
+        # frame.
+        self.complications = ComplicationManager(
+            self
+        )
+
         self.setWindowFlags(
             QtCore.Qt.FramelessWindowHint |
             QtCore.Qt.WindowStaysOnTopHint |
@@ -212,6 +223,38 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         self.tray_menu = QtWidgets.QMenu()
         self.toggle_action = self.tray_menu.addAction("Disable Mousehair")
         self.toggle_action.triggered.connect(self.toggle_visibility)
+        pomodoro_menu = self.tray_menu.addMenu(
+            "Pomodoro"
+        )
+
+        pomodoro_start_action = pomodoro_menu.addAction(
+            "Start / Resume"
+        )
+        pomodoro_start_action.triggered.connect(
+            self.complications.pomodoro.start
+        )
+
+        pomodoro_pause_action = pomodoro_menu.addAction(
+            "Pause"
+        )
+        pomodoro_pause_action.triggered.connect(
+            self.complications.pomodoro.pause
+        )
+
+        pomodoro_reset_action = pomodoro_menu.addAction(
+            "Reset"
+        )
+        pomodoro_reset_action.triggered.connect(
+            self.complications.pomodoro.reset
+        )
+
+        pomodoro_skip_action = pomodoro_menu.addAction(
+            "Skip phase"
+        )
+        pomodoro_skip_action.triggered.connect(
+            self.complications.pomodoro.skip
+        )
+
         settings_action = self.tray_menu.addAction("Settings")
         settings_action.triggered.connect(self.show_settings_dialog)
         quit_action = self.tray_menu.addAction("Quit")
@@ -352,7 +395,13 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             'arrow_border_over_line': True,
             'ring_enabled': False,
             'magnifier_enabled': False,
-            'magnification': 2.0
+            'magnification': 2.0,
+            'pomodoro_enabled': True,
+            'pomodoro_focus_minutes': 25,
+            'pomodoro_break_minutes': 5,
+            'pomodoro_auto_start': False,
+            'pomodoro_ring_thickness': 5.0,
+            'pomodoro_icon_size': 14.0
         }
         self.start_with_system = defaults['start_with_system']
         self.alpha = defaults['alpha']
@@ -384,6 +433,12 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         self.ring_enabled = defaults['ring_enabled']
         self.magnifier_enabled = defaults['magnifier_enabled']
         self.magnification = defaults['magnification']
+        self.pomodoro_enabled = defaults['pomodoro_enabled']
+        self.pomodoro_focus_minutes = defaults['pomodoro_focus_minutes']
+        self.pomodoro_break_minutes = defaults['pomodoro_break_minutes']
+        self.pomodoro_auto_start = defaults['pomodoro_auto_start']
+        self.pomodoro_ring_thickness = defaults['pomodoro_ring_thickness']
+        self.pomodoro_icon_size = defaults['pomodoro_icon_size']
         self.animation_phase = 0.0
         self.animation_clock = QtCore.QElapsedTimer()
         self.animation_clock.start()
@@ -476,6 +531,12 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             self.ring_enabled = bool(data.get('ring_enabled', self.ring_enabled))
             self.magnifier_enabled = bool(data.get('magnifier_enabled', self.magnifier_enabled))
             self.magnification = float(data.get('magnification', self.magnification))
+            self.pomodoro_enabled = bool(data.get('pomodoro_enabled', self.pomodoro_enabled))
+            self.pomodoro_focus_minutes = int(data.get('pomodoro_focus_minutes', self.pomodoro_focus_minutes))
+            self.pomodoro_break_minutes = int(data.get('pomodoro_break_minutes', self.pomodoro_break_minutes))
+            self.pomodoro_auto_start = bool(data.get('pomodoro_auto_start', self.pomodoro_auto_start))
+            self.pomodoro_ring_thickness = float(data.get('pomodoro_ring_thickness', self.pomodoro_ring_thickness))
+            self.pomodoro_icon_size = float(data.get('pomodoro_icon_size', self.pomodoro_icon_size))
             self.hotkey_key = str(data.get('hotkey_key', self.hotkey_key))
             self.hotkey_modifiers = list(data.get('hotkey_modifiers', self.hotkey_modifiers))
         except:
@@ -519,6 +580,12 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
                 'ring_enabled': self.ring_enabled,
                 'magnifier_enabled': self.magnifier_enabled,
                 'magnification': self.magnification,
+                'pomodoro_enabled': self.pomodoro_enabled,
+                'pomodoro_focus_minutes': self.pomodoro_focus_minutes,
+                'pomodoro_break_minutes': self.pomodoro_break_minutes,
+                'pomodoro_auto_start': self.pomodoro_auto_start,
+                'pomodoro_ring_thickness': self.pomodoro_ring_thickness,
+                'pomodoro_icon_size': self.pomodoro_icon_size,
                 'hotkey_key': self.hotkey_key,
                 'hotkey_modifiers': self.hotkey_modifiers
             }, f)
@@ -1028,6 +1095,14 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         self.draw_magnifier(painter, mx, my)
         self.draw_crosshair(painter, mx, my, outer_pen, inner_pen)
         self.draw_ring(painter, mx, my, outer_pen, inner_pen)
+
+        # Complications paint last so they can deliberately sit above the
+        # ordinary reticule where their placement policy calls for it.
+        self.draw_complications(
+            painter,
+            mx,
+            my,
+        )
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
