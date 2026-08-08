@@ -24,6 +24,9 @@ class CinnamonLensBridge(QtCore.QObject):
     DBUS_GEOMETRY_METHOD = f"{DBUS_INTERFACE}.SetGeometry"
     DBUS_RING_STYLE_METHOD = f"{DBUS_INTERFACE}.SetRingStyle"
     DBUS_HEARTBEAT_METHOD = f"{DBUS_INTERFACE}.Heartbeat"
+    DBUS_POMODORO_STATE_METHOD = (
+        f"{DBUS_INTERFACE}.SetPomodoroState"
+    )
     DBUS_SYNC_STATE_METHOD = f"{DBUS_INTERFACE}.SynchroniseState"
 
     def __init__(self, parent=None):
@@ -206,6 +209,25 @@ class CinnamonLensBridge(QtCore.QObject):
                 str(outer_colour),
                 str(inner_colour),
                 format(float(opacity), ".6f"),
+            ],
+        )
+
+    def set_pomodoro_state(
+        self,
+        *,
+        enabled,
+        progress,
+        ring_thickness,
+        icon_size,
+    ):
+        """Send the compositor-visible Pomodoro presentation state."""
+        self._start_silent_detached_call(
+            self.DBUS_POMODORO_STATE_METHOD,
+            [
+                "true" if enabled else "false",
+                format(float(progress), ".6f"),
+                format(float(ring_thickness), ".6f"),
+                format(float(icon_size), ".6f"),
             ],
         )
 

@@ -65,6 +65,12 @@ const DBUS_XML = `
       <arg type="s" name="innerColour" direction="in"/>
     </method>
     <method name="Heartbeat"/>
+    <method name="SetPomodoroState">
+      <arg type="b" name="enabled" direction="in"/>
+      <arg type="d" name="progress" direction="in"/>
+      <arg type="d" name="ringThickness" direction="in"/>
+      <arg type="d" name="iconSize" direction="in"/>
+    </method>
     <method name="SynchroniseState">
       <arg type="d" name="lensRadius" direction="in"/>
       <arg type="d" name="magnification" direction="in"/>
@@ -143,6 +149,15 @@ class MousehairMagnifierProof {
         this._ringInnerThickness = 2.0;
         this._ringOuterColour = '#000000';
         this._ringInnerColour = '#FFFFFF';
+
+        /*
+         * Pomodoro state is supplied by the Python application. Cinnamon owns
+         * only the compositor-side presentation.
+         */
+        this._pomodoroEnabled = false;
+        this._pomodoroProgress = 0.0;
+        this._pomodoroRingThickness = 5.0;
+        this._pomodoroIconSize = 14.0;
         /*
          * The apparent circular lens is assembled from thin rectangular
          * magnified chords. Everything outside those chords remains
@@ -482,15 +497,244 @@ class MousehairMagnifierProof {
             Number(this._ringOuterThickness) / 2.0
         );
 
+        let visibleExtent =
+            this._ringRadius + outerHalfWidth;
+
+        if (this._pomodoroEnabled) {
+            const pomodoroExtent =
+                this._pomodoroProgressRadius()
+                + Math.max(
+                    3.0,
+                    Number(this._pomodoroIconSize) / 2.0
+                );
+
+            visibleExtent = Math.max(
+                visibleExtent,
+                pomodoroExtent
+            );
+        }
+
         const diameter = Math.max(
             2,
             Math.ceil(
-                (this._ringRadius + outerHalfWidth) * 2.0 + 4.0
+                visibleExtent * 2.0 + 4.0
             )
         );
 
         this._ringActor.set_size(diameter, diameter);
         this._ringActor.queue_repaint();
+    }
+
+    _pomodoroProgressRadius() {
+        const outerHalfWidth = Math.max(
+            0.0,
+            Number(this._ringOuterThickness) / 2.0
+        );
+
+        const ringInnerEdge = Math.max(
+            1.0,
+            Number(this._ringRadius) - outerHalfWidth
+        );
+
+        const thickness = Math.max(
+            1.0,
+            Number(this._pomodoroRingThickness)
+        );
+
+        return Math.max(
+            8.0,
+            Math.min(
+                Number(this._ringRadius),
+                ringInnerEdge - 5.0 - thickness / 2.0
+            )
+        );
+    }
+
+    _paintPomodoro(context, centreX, centreY) {
+        if (!this._pomodoroEnabled)
+            return;
+
+        const thickness = Math.max(
+            1.0,
+            Number(this._pomodoroRingThickness)
+        );
+
+        const iconRadius = Math.max(
+            3.0,
+            Number(this._pomodoroIconSize) / 2.0
+        );
+
+        const progress = Math.max(
+            0.0,
+            Math.min(
+                1.0,
+                Number(this._pomodoroProgress)
+            )
+        );
+
+        const radius = this._pomodoroProgressRadius();
+
+        /*
+         * Dark tomato track.
+         */
+        context.setSourceRGBA(
+            0x40 / 255.0,
+            0x14 / 255.0,
+            0x14 / 255.0,
+            0.70
+        );
+
+        context.setLineWidth(thickness);
+
+        context.arc(
+            centreX,
+            centreY,
+            radius,
+            0.0,
+            Math.PI * 2.0
+        );
+
+        context.stroke();
+
+        /*
+         * Filled elapsed-time arc. Cairo's screen coordinate system has
+         * positive Y downward, so increasing angle from -PI/2 travels
+         * clockwise from 12 o'clock.
+         */
+        if (progress > 0.0) {
+            context.setSourceRGBA(
+                0xE5 / 255.0,
+                0x39 / 255.0,
+                0x35 / 255.0,
+                1.0
+            );
+
+            context.setLineWidth(thickness);
+
+            context.arc(
+                centreX,
+                centreY,
+                radius,
+                -Math.PI / 2.0,
+                -Math.PI / 2.0
+                    + Math.PI * 2.0 * progress
+            );
+
+            context.stroke();
+        }
+
+        /*
+         * Temporary tomato marker. We will improve its actual tomato shape
+         * after compositor layering is proven.
+         */
+        const tomatoX = centreX;
+        const tomatoY = centreY - radius;
+
+        context.setSourceRGBA(
+            0xE5 / 255.0,
+            0x39 / 255.0,
+            0x35 / 255.0,
+            1.0
+        );
+
+        context.arc(
+            tomatoX,
+            tomatoY,
+            iconRadius,
+            0.0,
+            Math.PI * 2.0
+        );
+
+        context.fill();
+
+        context.setSourceRGBA(
+            0x43 / 255.0,
+            0xA0 / 255.0,
+            0x47 / 255.0,
+            1.0
+        );
+
+        context.moveTo(
+            tomatoX,
+            tomatoY - iconRadius - 3.0
+        );
+
+        context.lineTo(
+            tomatoX + iconRadius * 0.35,
+            tomatoY - iconRadius * 0.35
+        );
+
+        context.lineTo(
+            tomatoX + iconRadius * 0.75,
+            tomatoY - iconRadius * 0.55
+        );
+
+        context.lineTo(
+            tomatoX + iconRadius * 0.30,
+            tomatoY
+        );
+
+        context.lineTo(
+            tomatoX,
+            tomatoY - iconRadius * 0.25
+        );
+
+        context.lineTo(
+            tomatoX - iconRadius * 0.30,
+            tomatoY
+        );
+
+        context.lineTo(
+            tomatoX - iconRadius * 0.75,
+            tomatoY - iconRadius * 0.55
+        );
+
+        context.lineTo(
+            tomatoX - iconRadius * 0.35,
+            tomatoY - iconRadius * 0.35
+        );
+
+        context.closePath();
+        context.fill();
+    }
+
+    _setPomodoroState(
+        enabled,
+        progress,
+        ringThickness,
+        iconSize
+    ) {
+        this._pomodoroEnabled = Boolean(enabled);
+
+        const requestedProgress = Number(progress);
+        const requestedThickness = Number(ringThickness);
+        const requestedIconSize = Number(iconSize);
+
+        if (Number.isFinite(requestedProgress)) {
+            this._pomodoroProgress = Math.max(
+                0.0,
+                Math.min(1.0, requestedProgress)
+            );
+        }
+
+        if (
+            Number.isFinite(requestedThickness) &&
+            requestedThickness > 0.0
+        ) {
+            this._pomodoroRingThickness = requestedThickness;
+        }
+
+        if (
+            Number.isFinite(requestedIconSize) &&
+            requestedIconSize > 0.0
+        ) {
+            this._pomodoroIconSize = requestedIconSize;
+        }
+
+        this._resizeRingActor();
+
+        if (this._ringActor)
+            this._ringActor.queue_repaint();
     }
 
     _paintRing(actor) {
@@ -500,6 +744,16 @@ class MousehairMagnifierProof {
 
         const centreX = width / 2.0;
         const centreY = height / 2.0;
+
+        /*
+         * Complications paint first. The accessibility reticule then paints
+         * over them and remains the visually dominant pointer marker.
+         */
+        this._paintPomodoro(
+            context,
+            centreX,
+            centreY
+        );
 
         /*
          * Match Mousehair's PyQt renderer exactly: both strokes are centred on
@@ -1135,6 +1389,18 @@ class MousehairMagnifierProof {
                 ),
 
                 Heartbeat: () => this._heartbeat(),
+
+                SetPomodoroState: (
+                    enabled,
+                    progress,
+                    ringThickness,
+                    iconSize
+                ) => this._setPomodoroState(
+                    enabled,
+                    progress,
+                    ringThickness,
+                    iconSize
+                ),
 
                 SynchroniseState: (
                     lensRadius,

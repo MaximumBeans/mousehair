@@ -165,6 +165,16 @@ class RenderPipelineMixin:
         if manager is None:
             return
 
+        # When Mousehair's compositor-native magnifier is enabled, Cinnamon
+        # paints HUD complications above the lens. Do not also paint the PyQt
+        # copy into Main.uiGroup, where it would be captured by the lens.
+        if getattr(
+            self,
+            "magnifier_enabled",
+            False,
+        ):
+            return
+
         manager.update()
 
         reticle = self._reticle_geometry()

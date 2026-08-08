@@ -385,7 +385,17 @@ class PomodoroComplication(Complication):
 
         # Leave a small breathing space between the accessibility reticule and
         # the Pomodoro progress ring.
-        progress_width = 5.0
+        progress_width = max(
+            1.0,
+            float(
+                getattr(
+                    self.host,
+                    "pomodoro_ring_thickness",
+                    5.0,
+                )
+            ),
+        )
+
         padding = 5.0
 
         progress_radius = max(
@@ -509,7 +519,16 @@ class PomodoroComplication(Complication):
             - progress_radius
         )
 
-        tomato_radius = 7.0
+        tomato_radius = max(
+            3.0,
+            float(
+                getattr(
+                    self.host,
+                    "pomodoro_icon_size",
+                    14.0,
+                )
+            ) / 2.0,
+        )
 
         tomato_rect = QtCore.QRectF(
             tomato_center_x
