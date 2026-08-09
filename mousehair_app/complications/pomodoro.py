@@ -645,8 +645,83 @@ class PomodoroComplication(Complication):
         painter.setBrush(
             QtCore.Qt.NoBrush
         )
-        painter.drawEllipse(
-            arc_rect
+
+        # ------------------------------------------------------------
+        # Reserve a genuine angular gap for the tomato marker.
+        #
+        # The timer's 0% point begins immediately clockwise of the tomato and
+        # its 100% point ends immediately counter-clockwise of it. Time spent
+        # beneath the icon therefore no longer exists as an invisible portion
+        # of the timer.
+        # ------------------------------------------------------------
+
+        tomato_radius = max(
+            3.0,
+            float(
+                getattr(
+                    self.host,
+                    "pomodoro_icon_size",
+                    14.0,
+                )
+            ) / 2.0,
+        )
+
+        marker_clearance = max(
+            2.0,
+            progress_width / 2.0,
+        )
+
+        hidden_half_width = (
+            tomato_radius
+            + marker_clearance
+        )
+
+        gap_ratio = min(
+            0.95,
+            hidden_half_width
+            / max(
+                1.0,
+                progress_radius,
+            ),
+        )
+
+        marker_half_angle = math.degrees(
+            math.asin(
+                gap_ratio
+            )
+        )
+
+        usable_span_degrees = max(
+            1.0,
+            360.0
+            - marker_half_angle * 2.0,
+        )
+
+        # QPainter's positive direction is counter-clockwise. Moving clockwise
+        # from twelve o'clock therefore means decreasing the angle.
+        visible_start_degrees = (
+            90.0
+            - marker_half_angle
+        )
+
+        track_start_angle = int(
+            round(
+                visible_start_degrees
+                * 16.0
+            )
+        )
+
+        track_span_angle = int(
+            round(
+                -usable_span_degrees
+                * 16.0
+            )
+        )
+
+        painter.drawArc(
+            arc_rect,
+            track_start_angle,
+            track_span_angle,
         )
 
         # Mousehair's Pomodoro identity: proper tomato red.
@@ -671,25 +746,21 @@ class PomodoroComplication(Complication):
             progress_pen
         )
 
-        # QPainter uses sixteenths of a degree, with positive values travelling
-        # counter-clockwise. Start at 12 o'clock and use a negative span so
-        # Mousehair fills clockwise.
-        start_angle = (
-            90
-            * 16
+        # Progress occupies only the visible part of the ring. At zero it
+        # begins immediately beside the tomato. At one it finishes at the
+        # opposite side of the tomato gap.
+        progress_span_angle = int(
+            round(
+                track_span_angle
+                * snapshot.progress
+            )
         )
 
-        span_angle = int(
-            -360
-            * 16
-            * snapshot.progress
-        )
-
-        if span_angle:
+        if progress_span_angle:
             painter.drawArc(
                 arc_rect,
-                start_angle,
-                span_angle,
+                track_start_angle,
+                progress_span_angle,
             )
 
         # ------------------------------------------------------------

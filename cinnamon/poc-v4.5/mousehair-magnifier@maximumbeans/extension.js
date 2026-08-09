@@ -70,6 +70,9 @@ const DBUS_XML = `
       <arg type="s" name="phase" direction="in"/>
       <arg type="d" name="progress" direction="in"/>
       <arg type="d" name="remainingSeconds" direction="in"/>
+      <arg type="s" name="focusColour" direction="in"/>
+      <arg type="s" name="breakColour" direction="in"/>
+      <arg type="i" name="timerTextSize" direction="in"/>
       <arg type="d" name="ringThickness" direction="in"/>
       <arg type="d" name="iconSize" direction="in"/>
     </method>
@@ -160,6 +163,9 @@ class MousehairMagnifierProof {
         this._pomodoroPhase = 'focus';
         this._pomodoroProgress = 0.0;
         this._pomodoroRemainingSeconds = 25 * 60;
+        this._pomodoroFocusColour = '#E53935';
+        this._pomodoroBreakColour = '#43A047';
+        this._pomodoroTimerTextSize = 16;
         this._pomodoroRingThickness = 5.0;
         this._pomodoroIconSize = 14.0;
         /*
@@ -585,29 +591,20 @@ class MousehairMagnifierProof {
          * Focus is tomato red. Both short and long breaks use green by
          * default so the current mode is obvious without reading text.
          */
-        const progressColour = isFocus
-            ? {
-                red: 0xE5 / 255.0,
-                green: 0x39 / 255.0,
-                blue: 0x35 / 255.0,
-            }
-            : {
-                red: 0x43 / 255.0,
-                green: 0xA0 / 255.0,
-                blue: 0x47 / 255.0,
-            };
+        const progressColour = this._parseHexColour(
+            isFocus
+                ? this._pomodoroFocusColour
+                : this._pomodoroBreakColour,
+            isFocus
+                ? '#E53935'
+                : '#43A047'
+        );
 
-        const trackColour = isFocus
-            ? {
-                red: 0x40 / 255.0,
-                green: 0x14 / 255.0,
-                blue: 0x14 / 255.0,
-            }
-            : {
-                red: 0x16 / 255.0,
-                green: 0x3D / 255.0,
-                blue: 0x1B / 255.0,
-            };
+        const trackColour = {
+            red: progressColour.red * 0.28,
+            green: progressColour.green * 0.28,
+            blue: progressColour.blue * 0.28,
+        };
 
         context.setSourceRGBA(
             trackColour.red,
@@ -618,20 +615,63 @@ class MousehairMagnifierProof {
 
         context.setLineWidth(thickness);
 
+        /*
+         * Reserve real angular space for the tomato. The first visible pixel
+         * of the timer is immediately clockwise of the marker and 100% ends
+         * immediately on its other side.
+         */
+        const markerClearance = Math.max(
+            2.0,
+            thickness / 2.0
+        );
+
+        const hiddenHalfWidth =
+            iconRadius
+            + markerClearance;
+
+        const gapRatio = Math.min(
+            0.95,
+            hiddenHalfWidth
+                / Math.max(
+                    1.0,
+                    radius
+                )
+        );
+
+        const markerHalfAngle = Math.asin(
+            gapRatio
+        );
+
+        const usableSpan = Math.max(
+            0.01,
+            Math.PI * 2.0
+                - markerHalfAngle * 2.0
+        );
+
+        /*
+         * Cairo's positive angular direction appears clockwise in screen
+         * coordinates because Y increases downward.
+         */
+        const arcStart =
+            -Math.PI / 2.0
+            + markerHalfAngle;
+
+        const arcEnd =
+            arcStart
+            + usableSpan;
+
         context.arc(
             centreX,
             centreY,
             radius,
-            0.0,
-            Math.PI * 2.0
+            arcStart,
+            arcEnd
         );
 
         context.stroke();
 
         /*
-         * Filled elapsed-time arc. Cairo's screen coordinate system has
-         * positive Y downward, so increasing angle from -PI/2 travels
-         * clockwise from 12 o'clock.
+         * Filled elapsed-time arc.
          */
         if (progress > 0.0) {
             context.setSourceRGBA(
@@ -647,9 +687,9 @@ class MousehairMagnifierProof {
                 centreX,
                 centreY,
                 radius,
-                -Math.PI / 2.0,
-                -Math.PI / 2.0
-                    + Math.PI * 2.0 * progress
+                arcStart,
+                arcStart
+                    + usableSpan * progress
             );
 
             context.stroke();
@@ -683,7 +723,12 @@ class MousehairMagnifierProof {
             0,
             1
         );
-        context.setFontSize(16.0);
+        context.setFontSize(
+            Math.max(
+                8.0,
+                Number(this._pomodoroTimerTextSize)
+            )
+        );
 
         const extents = context.textExtents(
             countdown
@@ -820,6 +865,9 @@ class MousehairMagnifierProof {
         phase,
         progress,
         remainingSeconds,
+        focusColour,
+        breakColour,
+        timerTextSize,
         ringThickness,
         iconSize
     ) {
@@ -830,8 +878,25 @@ class MousehairMagnifierProof {
 
         const requestedProgress = Number(progress);
         const requestedRemaining = Number(remainingSeconds);
+        const requestedTextSize = Number(timerTextSize);
         const requestedThickness = Number(ringThickness);
         const requestedIconSize = Number(iconSize);
+
+        this._pomodoroFocusColour = String(
+            focusColour || '#E53935'
+        );
+
+        this._pomodoroBreakColour = String(
+            breakColour || '#43A047'
+        );
+
+        if (
+            Number.isFinite(requestedTextSize) &&
+            requestedTextSize >= 8
+        ) {
+            this._pomodoroTimerTextSize =
+                requestedTextSize;
+        }
 
         if (Number.isFinite(requestedRemaining)) {
             this._pomodoroRemainingSeconds = Math.max(
@@ -1525,6 +1590,9 @@ class MousehairMagnifierProof {
                     phase,
                     progress,
                     remainingSeconds,
+                    focusColour,
+                    breakColour,
+                    timerTextSize,
                     ringThickness,
                     iconSize
                 ) => this._setPomodoroState(
@@ -1532,6 +1600,9 @@ class MousehairMagnifierProof {
                     phase,
                     progress,
                     remainingSeconds,
+                    focusColour,
+                    breakColour,
+                    timerTextSize,
                     ringThickness,
                     iconSize
                 ),

@@ -1385,47 +1385,267 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         # COMPLICATIONS TAB
         # ============================================================
 
-        complications_scroll = QtWidgets.QScrollArea()
-        complications_scroll.setWidgetResizable(True)
-        complications_scroll.setFrameShape(
-            QtWidgets.QFrame.NoFrame
-        )
-        complications_scroll.setHorizontalScrollBarPolicy(
-            QtCore.Qt.ScrollBarAlwaysOff
-        )
-
         complications_widget = QtWidgets.QWidget()
-        complications_layout = QtWidgets.QVBoxLayout(
+
+        complications_layout = QtWidgets.QHBoxLayout(
             complications_widget
         )
         complications_layout.setContentsMargins(
-            12,
-            12,
-            12,
-            12,
+            8,
+            8,
+            8,
+            8,
         )
 
-        complications_scroll.setWidget(
-            complications_widget
-        )
         tabs.addTab(
-            complications_scroll,
+            complications_widget,
             "Complications",
         )
 
-        pomodoro_box = QtWidgets.QGroupBox(
-            "Pomodoro"
-        )
+        # ------------------------------------------------------------
+        # Navigation tree
+        # ------------------------------------------------------------
 
-        pomodoro_layout = QtWidgets.QFormLayout(
-            pomodoro_box
-        )
+        complications_tree = QtWidgets.QTreeWidget()
+        complications_tree.setHeaderHidden(True)
+        complications_tree.setRootIsDecorated(True)
+        complications_tree.setMinimumWidth(170)
+        complications_tree.setMaximumWidth(240)
+
+        complications_pages = QtWidgets.QStackedWidget()
 
         complications_layout.addWidget(
-            pomodoro_box
+            complications_tree
+        )
+        complications_layout.addWidget(
+            complications_pages,
+            1,
         )
 
-        complications_layout.addStretch(1)
+        pomodoro_item = QtWidgets.QTreeWidgetItem(
+            ["Pomodoro"]
+        )
+
+        pomodoro_timer_item = QtWidgets.QTreeWidgetItem(
+            ["Timer"]
+        )
+
+        pomodoro_appearance_item = QtWidgets.QTreeWidgetItem(
+            ["Appearance"]
+        )
+
+        pomodoro_sounds_item = QtWidgets.QTreeWidgetItem(
+            ["Sounds"]
+        )
+
+        pomodoro_hotkeys_item = QtWidgets.QTreeWidgetItem(
+            ["Hotkeys"]
+        )
+
+        pomodoro_placement_item = QtWidgets.QTreeWidgetItem(
+            ["Placement"]
+        )
+
+        pomodoro_item.addChildren(
+            [
+                pomodoro_timer_item,
+                pomodoro_appearance_item,
+                pomodoro_sounds_item,
+                pomodoro_hotkeys_item,
+                pomodoro_placement_item,
+            ]
+        )
+
+        complications_tree.addTopLevelItem(
+            pomodoro_item
+        )
+
+        pomodoro_item.setExpanded(True)
+
+        # ------------------------------------------------------------
+        # Pomodoro overview
+        # ------------------------------------------------------------
+
+        pomodoro_overview_page = QtWidgets.QWidget()
+
+        pomodoro_layout = QtWidgets.QFormLayout(
+            pomodoro_overview_page
+        )
+        pomodoro_layout.setContentsMargins(
+            16,
+            16,
+            16,
+            16,
+        )
+
+        complications_pages.addWidget(
+            pomodoro_overview_page
+        )
+
+        # ------------------------------------------------------------
+        # Timer page
+        # ------------------------------------------------------------
+
+        pomodoro_timer_page = QtWidgets.QWidget()
+
+        pomodoro_timer_layout = QtWidgets.QFormLayout(
+            pomodoro_timer_page
+        )
+        pomodoro_timer_layout.setContentsMargins(
+            16,
+            16,
+            16,
+            16,
+        )
+
+        complications_pages.addWidget(
+            pomodoro_timer_page
+        )
+
+        # ------------------------------------------------------------
+        # Appearance page
+        # ------------------------------------------------------------
+
+        pomodoro_appearance_page = QtWidgets.QWidget()
+
+        pomodoro_appearance_layout = QtWidgets.QFormLayout(
+            pomodoro_appearance_page
+        )
+        pomodoro_appearance_layout.setContentsMargins(
+            16,
+            16,
+            16,
+            16,
+        )
+
+        complications_pages.addWidget(
+            pomodoro_appearance_page
+        )
+
+        # ------------------------------------------------------------
+        # Future Pomodoro sections
+        # ------------------------------------------------------------
+
+        def make_future_complication_page(title, description):
+            page = QtWidgets.QWidget()
+
+            layout = QtWidgets.QVBoxLayout(page)
+            layout.setContentsMargins(
+                16,
+                16,
+                16,
+                16,
+            )
+
+            heading = QtWidgets.QLabel(
+                f"<b>{title}</b>"
+            )
+
+            label = QtWidgets.QLabel(
+                description
+            )
+            label.setWordWrap(True)
+
+            layout.addWidget(heading)
+            layout.addWidget(label)
+            layout.addStretch(1)
+
+            complications_pages.addWidget(
+                page
+            )
+
+            return page
+
+        pomodoro_sounds_page = (
+            make_future_complication_page(
+                "Pomodoro sounds",
+                "Work and break start/end sounds will be configured here.",
+            )
+        )
+
+        pomodoro_hotkeys_page = (
+            make_future_complication_page(
+                "Pomodoro hotkeys",
+                "Global Pomodoro controls will be configured here.",
+            )
+        )
+
+        pomodoro_placement_page = (
+            make_future_complication_page(
+                "Pomodoro placement",
+                "Ring, countdown and icon placement controls will live here.",
+            )
+        )
+
+        # Store the stacked-page index directly on each tree item.
+        # QTreeWidgetItem is not hashable, so it cannot safely be used
+        # as a dictionary key.
+        page_role = (
+            QtCore.Qt.UserRole
+        )
+
+        pomodoro_item.setData(
+            0,
+            page_role,
+            0,
+        )
+
+        pomodoro_timer_item.setData(
+            0,
+            page_role,
+            1,
+        )
+
+        pomodoro_appearance_item.setData(
+            0,
+            page_role,
+            2,
+        )
+
+        pomodoro_sounds_item.setData(
+            0,
+            page_role,
+            3,
+        )
+
+        pomodoro_hotkeys_item.setData(
+            0,
+            page_role,
+            4,
+        )
+
+        pomodoro_placement_item.setData(
+            0,
+            page_role,
+            5,
+        )
+
+        def select_complication_page(
+            current,
+            _previous,
+        ):
+            if current is None:
+                return
+
+            page_index = current.data(
+                0,
+                page_role,
+            )
+
+            if page_index is None:
+                page_index = 0
+
+            complications_pages.setCurrentIndex(
+                int(page_index)
+            )
+
+        complications_tree.currentItemChanged.connect(
+            select_complication_page
+        )
+
+        complications_tree.setCurrentItem(
+            pomodoro_item
+        )
 
         pomodoro_enabled_chk = QtWidgets.QCheckBox(
             "Enable Pomodoro complication"
@@ -1608,51 +1828,80 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             " px"
         )
 
+        # Overview
         pomodoro_layout.addRow(
             pomodoro_enabled_chk
         )
+
+        pomodoro_description = QtWidgets.QLabel(
+            "A pointer-centred focus timer with short and long breaks."
+        )
+        pomodoro_description.setWordWrap(True)
+
         pomodoro_layout.addRow(
+            pomodoro_description
+        )
+
+        # Timer
+        pomodoro_timer_layout.addRow(
             "Focus duration:",
             pomodoro_focus_spin,
         )
-        pomodoro_layout.addRow(
+
+        pomodoro_timer_layout.addRow(
             "Short break duration:",
             pomodoro_short_break_spin,
         )
-        pomodoro_layout.addRow(
+
+        pomodoro_timer_layout.addRow(
             "Long break duration:",
             pomodoro_long_break_spin,
         )
-        pomodoro_layout.addRow(
+
+        pomodoro_timer_layout.addRow(
             "Focuses before long break:",
             pomodoro_cycle_spin,
         )
-        pomodoro_layout.addRow(
+
+        pomodoro_timer_layout.addRow(
             pomodoro_auto_start_break_chk
         )
-        pomodoro_layout.addRow(
+
+        pomodoro_timer_layout.addRow(
             pomodoro_auto_start_focus_chk
         )
-        pomodoro_layout.addRow(
+
+        # User-facing wording describes behaviour rather than implementation.
+        pomodoro_pause_after_cycle_chk.setText(
+            "Stop after a full Pomodoro cycle"
+        )
+
+        pomodoro_timer_layout.addRow(
             pomodoro_pause_after_cycle_chk
         )
-        pomodoro_layout.addRow(
+
+        # Appearance
+        pomodoro_appearance_layout.addRow(
             "Focus ring colour:",
             pomodoro_focus_colour_btn,
         )
-        pomodoro_layout.addRow(
+
+        pomodoro_appearance_layout.addRow(
             "Break ring colour:",
             pomodoro_break_colour_btn,
         )
-        pomodoro_layout.addRow(
+
+        pomodoro_appearance_layout.addRow(
             "Countdown text size:",
             pomodoro_timer_text_size_spin,
         )
-        pomodoro_layout.addRow(
+
+        pomodoro_appearance_layout.addRow(
             "Ring thickness:",
             pomodoro_ring_thickness_spin,
         )
-        pomodoro_layout.addRow(
+
+        pomodoro_appearance_layout.addRow(
             "Tomato icon size:",
             pomodoro_icon_size_spin,
         )
