@@ -1,6 +1,7 @@
 """Pomodoro timer complication for Mousehair."""
 
 from dataclasses import dataclass
+import math
 import time
 
 from PyQt5 import QtCore, QtGui
@@ -14,7 +15,12 @@ from .placement import ComplicationPlacement
 
 
 PHASE_FOCUS = "focus"
-PHASE_BREAK = "break"
+PHASE_SHORT_BREAK = "short_break"
+PHASE_LONG_BREAK = "long_break"
+
+# Temporary compatibility alias for code/config written before long breaks
+# existed. New code should use PHASE_SHORT_BREAK explicitly.
+PHASE_BREAK = PHASE_SHORT_BREAK
 
 STATE_IDLE = "idle"
 STATE_RUNNING = "running"
@@ -23,26 +29,21 @@ STATE_PAUSED = "paused"
 
 @dataclass(frozen=True)
 class PomodoroSnapshot:
-    """Read-only presentation state for the Pomodoro complication."""
+    """Read-only presentation state for the Pomodoro HUD."""
 
     phase: str
     state: str
 
     duration_seconds: float
     remaining_seconds: float
-
     progress: float
 
     completed_focus_sessions: int
+    focuses_until_long_break: int
 
 
 class PomodoroComplication(Complication):
-    """Pointer-centred Pomodoro timer.
-
-    Timer arithmetic deliberately lives independently from Qt rendering. This
-    keeps it deterministic, testable, and suitable for both the PyQt overlay
-    and the Cinnamon compositor extension.
-    """
+    """Pomodoro state machine and pointer-centred HUD complication."""
 
     name = "pomodoro"
     display_name = "Pomodoro"
@@ -59,8 +60,8 @@ class PomodoroComplication(Complication):
             suffix=" min",
         ),
         ComplicationSetting(
-            key="pomodoro_break_minutes",
-            label="Break duration",
+            key="pomodoro_short_break_minutes",
+            label="Short break duration",
             kind="int",
             default=5,
             minimum=1,
@@ -69,14 +70,38 @@ class PomodoroComplication(Complication):
             suffix=" min",
         ),
         ComplicationSetting(
-            key="pomodoro_auto_start",
-            label="Automatically start next phase",
+            key="pomodoro_long_break_minutes",
+            label="Long break duration",
+            kind="int",
+            default=15,
+            minimum=1,
+            maximum=120,
+            step=1,
+            suffix=" min",
+        ),
+        ComplicationSetting(
+            key="pomodoro_focuses_before_long_break",
+            label="Focuses before long break",
+            kind="int",
+            default=4,
+            minimum=1,
+            maximum=20,
+            step=1,
+        ),
+        ComplicationSetting(
+            key="pomodoro_auto_start_break",
+            label="Automatically start breaks",
+            kind="bool",
+            default=False,
+        ),
+        ComplicationSetting(
+            key="pomodoro_auto_start_focus",
+            label="Automatically start next focus",
             kind="bool",
             default=False,
         ),
     )
 
-    # A complete ring immediately inside the accessibility reticule.
     default_placement = ComplicationPlacement(
         radial_zone="inside",
         radial_offset=0.0,
@@ -96,8 +121,6 @@ class PomodoroComplication(Complication):
             placement=placement,
         )
 
-        # time.monotonic() is immune to wall-clock corrections and daylight
-        # saving changes, which is exactly what a countdown timer needs.
         self._clock = (
             clock
             if clock is not None
@@ -117,18 +140,45 @@ class PomodoroComplication(Complication):
         key,
         default,
     ):
-        """Read one host setting with a safe fallback."""
         return getattr(
             self.host,
             key,
             default,
         )
 
+    def focuses_before_long_break(self):
+        """Return the configured Pomodoro cycle length."""
+        return max(
+            1,
+            int(
+                self._setting(
+                    "pomodoro_focuses_before_long_break",
+                    4,
+                )
+            ),
+        )
+
+    def focuses_until_long_break(self):
+        """Return how many completed focuses remain before a long break."""
+        cycle_length = self.focuses_before_long_break()
+
+        completed_in_cycle = (
+            self.completed_focus_sessions
+            % cycle_length
+        )
+
+        remaining = (
+            cycle_length
+            - completed_in_cycle
+        )
+
+        return remaining
+
     def phase_duration_seconds(
         self,
         phase=None,
     ):
-        """Return the configured duration of a phase in seconds."""
+        """Return configured duration for one phase."""
         phase = (
             self.phase
             if phase is None
@@ -141,10 +191,16 @@ class PomodoroComplication(Complication):
                 25,
             )
 
-        elif phase == PHASE_BREAK:
+        elif phase == PHASE_SHORT_BREAK:
             minutes = self._setting(
-                "pomodoro_break_minutes",
+                "pomodoro_short_break_minutes",
                 5,
+            )
+
+        elif phase == PHASE_LONG_BREAK:
+            minutes = self._setting(
+                "pomodoro_long_break_minutes",
+                15,
             )
 
         else:
@@ -161,7 +217,6 @@ class PomodoroComplication(Complication):
         self,
         now=None,
     ):
-        """Return countdown time remaining in the current phase."""
         duration = self.phase_duration_seconds()
 
         if self.state == STATE_IDLE:
@@ -200,7 +255,6 @@ class PomodoroComplication(Complication):
         self,
         now=None,
     ):
-        """Return elapsed phase progress in the range 0.0 to 1.0."""
         duration = self.phase_duration_seconds()
 
         remaining = self.remaining_seconds(
@@ -211,8 +265,7 @@ class PomodoroComplication(Complication):
             0.0,
             min(
                 1.0,
-                1.0
-                - remaining / duration,
+                1.0 - remaining / duration,
             ),
         )
 
@@ -235,8 +288,7 @@ class PomodoroComplication(Complication):
             )
 
             self._started_at = (
-                now
-                - elapsed
+                now - elapsed
             )
 
         else:
@@ -246,7 +298,7 @@ class PomodoroComplication(Complication):
         self.state = STATE_RUNNING
 
     def pause(self):
-        """Pause the countdown without losing elapsed progress."""
+        """Pause without losing elapsed time."""
         if self.state != STATE_RUNNING:
             return
 
@@ -262,61 +314,129 @@ class PomodoroComplication(Complication):
         self.state = STATE_PAUSED
 
     def toggle(self):
-        """Toggle between running and paused states."""
         if self.state == STATE_RUNNING:
             self.pause()
         else:
             self.start()
 
     def reset(self):
-        """Reset to a fresh, idle focus session."""
+        """Return to a fresh first focus and reset the Pomodoro cycle."""
         self.phase = PHASE_FOCUS
         self.state = STATE_IDLE
+
+        self.completed_focus_sessions = 0
 
         self._started_at = None
         self._paused_remaining = None
 
     def reset_current_phase(self):
-        """Reset the current phase without switching focus/break."""
+        """Restart the current phase without resetting completed focuses."""
         self.state = STATE_IDLE
 
         self._started_at = None
         self._paused_remaining = None
 
-    def _advance_phase(self):
-        """Move from focus to break or break to focus."""
-        if self.phase == PHASE_FOCUS:
-            self.completed_focus_sessions += 1
-            self.phase = PHASE_BREAK
+    def _next_break_phase(self):
+        """Choose short or long break after a completed focus."""
+        cycle_length = self.focuses_before_long_break()
 
-        else:
-            self.phase = PHASE_FOCUS
+        if (
+            self.completed_focus_sessions
+            % cycle_length
+            == 0
+        ):
+            return PHASE_LONG_BREAK
+
+        return PHASE_SHORT_BREAK
+
+    def _should_auto_start_phase(self, phase):
+        """Return whether a newly entered phase should start immediately."""
+        if phase in {
+            PHASE_SHORT_BREAK,
+            PHASE_LONG_BREAK,
+        }:
+            return bool(
+                self._setting(
+                    "pomodoro_auto_start_break",
+                    False,
+                )
+            )
+
+        if phase == PHASE_FOCUS:
+            return bool(
+                self._setting(
+                    "pomodoro_auto_start_focus",
+                    False,
+                )
+            )
+
+        return False
+
+    def _enter_phase(
+        self,
+        phase,
+        *,
+        allow_auto_start=True,
+    ):
+        """Enter a new phase and apply its auto-start policy."""
+        self.phase = phase
 
         self._started_at = None
         self._paused_remaining = None
 
-        auto_start = bool(
-            self._setting(
-                "pomodoro_auto_start",
-                False,
+        should_start = (
+            allow_auto_start
+            and self._should_auto_start_phase(
+                phase
             )
         )
 
-        if auto_start:
+        if should_start:
             self.state = STATE_RUNNING
             self._started_at = self._clock()
+
         else:
             self.state = STATE_IDLE
 
+    def _advance_phase(self):
+        """Advance according to the Pomodoro cycle."""
+        if self.phase == PHASE_FOCUS:
+            self.completed_focus_sessions += 1
+
+            self._enter_phase(
+                self._next_break_phase()
+            )
+
+        else:
+            completed_full_cycle = (
+                self.phase
+                == PHASE_LONG_BREAK
+            )
+
+            pause_after_cycle = bool(
+                self._setting(
+                    "pomodoro_pause_after_cycle",
+                    True,
+                )
+            )
+
+            self._enter_phase(
+                PHASE_FOCUS,
+                allow_auto_start=not (
+                    completed_full_cycle
+                    and pause_after_cycle
+                ),
+            )
+
     def skip(self):
-        """Immediately move to the next Pomodoro phase."""
+        """Immediately advance to the logically next phase."""
         self._advance_phase()
 
     def update(
         self,
         now=None,
     ):
-        """Advance to the next phase when a running countdown expires."""
+        """Advance when a running phase expires."""
         if self.state != STATE_RUNNING:
             return False
 
@@ -329,13 +449,72 @@ class PomodoroComplication(Complication):
             return False
 
         self._advance_phase()
+
         return True
+
+    def countdown_text(
+        self,
+        now=None,
+    ):
+        """Return remaining time as a stable MM:SS HUD string."""
+        remaining = max(
+            0,
+            int(
+                math.ceil(
+                    self.remaining_seconds(
+                        now=now,
+                    )
+                )
+            ),
+        )
+
+        minutes, seconds = divmod(
+            remaining,
+            60,
+        )
+
+        return (
+            f"{minutes:02d}:{seconds:02d}"
+        )
+
+    def phase_colour(self):
+        """Return the configured progress colour for the current phase."""
+        if self.phase == PHASE_FOCUS:
+            return str(
+                self._setting(
+                    "pomodoro_focus_colour",
+                    "#E53935",
+                )
+            )
+
+        return str(
+            self._setting(
+                "pomodoro_break_colour",
+                "#43A047",
+            )
+        )
+
+    def phase_track_colour(self):
+        """Return a darker companion colour for the unfilled timer track."""
+        colour = QtGui.QColor(
+            self.phase_colour()
+        )
+
+        if not colour.isValid():
+            colour = QtGui.QColor(
+                "#E53935"
+                if self.phase == PHASE_FOCUS
+                else "#43A047"
+            )
+
+        # Qt's darker() keeps the track related to the selected user colour
+        # without requiring a second colour setting for every phase.
+        return colour.darker(300).name()
 
     def snapshot(
         self,
         now=None,
     ):
-        """Return immutable state suitable for rendering or persistence."""
         remaining = self.remaining_seconds(
             now=now,
         )
@@ -343,13 +522,18 @@ class PomodoroComplication(Complication):
         return PomodoroSnapshot(
             phase=self.phase,
             state=self.state,
-            duration_seconds=self.phase_duration_seconds(),
+            duration_seconds=(
+                self.phase_duration_seconds()
+            ),
             remaining_seconds=remaining,
             progress=self.progress(
                 now=now,
             ),
             completed_focus_sessions=(
                 self.completed_focus_sessions
+            ),
+            focuses_until_long_break=(
+                self.focuses_until_long_break()
             ),
         )
 
@@ -439,7 +623,7 @@ class PomodoroComplication(Complication):
         # A very dark track gives the timer a complete-circle silhouette even
         # before much progress has accumulated.
         track_colour = QtGui.QColor(
-            "#401414"
+            self.phase_track_colour()
         )
         track_colour.setAlphaF(
             opacity * 0.70
@@ -467,7 +651,7 @@ class PomodoroComplication(Complication):
 
         # Mousehair's Pomodoro identity: proper tomato red.
         progress_colour = QtGui.QColor(
-            "#E53935"
+            self.phase_colour()
         )
         progress_colour.setAlphaF(
             opacity
@@ -507,6 +691,84 @@ class PomodoroComplication(Complication):
                 start_angle,
                 span_angle,
             )
+
+        # ------------------------------------------------------------
+        # Countdown label at 6 o'clock
+        # ------------------------------------------------------------
+
+        countdown_text = self.countdown_text()
+
+        countdown_font = QtGui.QFont()
+        countdown_font.setBold(True)
+        countdown_font.setPixelSize(16)
+
+        painter.setFont(
+            countdown_font
+        )
+
+        metrics = QtGui.QFontMetricsF(
+            countdown_font
+        )
+
+        text_rect = metrics.boundingRect(
+            countdown_text
+        )
+
+        countdown_center_y = (
+            center_y
+            + progress_radius
+            - 18.0
+        )
+
+        background_rect = QtCore.QRectF(
+            center_x
+            - text_rect.width() / 2.0
+            - 6.0,
+            countdown_center_y
+            - text_rect.height() / 2.0
+            - 3.0,
+            text_rect.width()
+            + 12.0,
+            text_rect.height()
+            + 6.0,
+        )
+
+        background_colour = QtGui.QColor(
+            "#000000"
+        )
+        background_colour.setAlphaF(
+            opacity * 0.72
+        )
+
+        painter.setPen(
+            QtCore.Qt.NoPen
+        )
+        painter.setBrush(
+            background_colour
+        )
+
+        painter.drawRoundedRect(
+            background_rect,
+            5.0,
+            5.0,
+        )
+
+        text_colour = QtGui.QColor(
+            "#FFFFFF"
+        )
+        text_colour.setAlphaF(
+            opacity
+        )
+
+        painter.setPen(
+            text_colour
+        )
+
+        painter.drawText(
+            background_rect,
+            QtCore.Qt.AlignCenter,
+            countdown_text,
+        )
 
         # ------------------------------------------------------------
         # Tomato marker at 12 o'clock

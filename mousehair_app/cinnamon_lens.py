@@ -216,16 +216,23 @@ class CinnamonLensBridge(QtCore.QObject):
         self,
         *,
         enabled,
+        phase,
         progress,
+        remaining_seconds,
+        focus_colour,
+        break_colour,
+        timer_text_size,
         ring_thickness,
         icon_size,
     ):
-        """Send the compositor-visible Pomodoro presentation state."""
+        """Send compositor-visible Pomodoro presentation state."""
         self._start_silent_detached_call(
             self.DBUS_POMODORO_STATE_METHOD,
             [
                 "true" if enabled else "false",
+                str(phase),
                 format(float(progress), ".6f"),
+                format(float(remaining_seconds), ".6f"),
                 format(float(ring_thickness), ".6f"),
                 format(float(icon_size), ".6f"),
             ],

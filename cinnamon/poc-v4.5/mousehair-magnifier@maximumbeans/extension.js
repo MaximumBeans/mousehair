@@ -67,7 +67,9 @@ const DBUS_XML = `
     <method name="Heartbeat"/>
     <method name="SetPomodoroState">
       <arg type="b" name="enabled" direction="in"/>
+      <arg type="s" name="phase" direction="in"/>
       <arg type="d" name="progress" direction="in"/>
+      <arg type="d" name="remainingSeconds" direction="in"/>
       <arg type="d" name="ringThickness" direction="in"/>
       <arg type="d" name="iconSize" direction="in"/>
     </method>
@@ -155,7 +157,9 @@ class MousehairMagnifierProof {
          * only the compositor-side presentation.
          */
         this._pomodoroEnabled = false;
+        this._pomodoroPhase = 'focus';
         this._pomodoroProgress = 0.0;
+        this._pomodoroRemainingSeconds = 25 * 60;
         this._pomodoroRingThickness = 5.0;
         this._pomodoroIconSize = 14.0;
         /*
@@ -574,13 +578,41 @@ class MousehairMagnifierProof {
 
         const radius = this._pomodoroProgressRadius();
 
+        const isFocus =
+            this._pomodoroPhase === 'focus';
+
         /*
-         * Dark tomato track.
+         * Focus is tomato red. Both short and long breaks use green by
+         * default so the current mode is obvious without reading text.
          */
+        const progressColour = isFocus
+            ? {
+                red: 0xE5 / 255.0,
+                green: 0x39 / 255.0,
+                blue: 0x35 / 255.0,
+            }
+            : {
+                red: 0x43 / 255.0,
+                green: 0xA0 / 255.0,
+                blue: 0x47 / 255.0,
+            };
+
+        const trackColour = isFocus
+            ? {
+                red: 0x40 / 255.0,
+                green: 0x14 / 255.0,
+                blue: 0x14 / 255.0,
+            }
+            : {
+                red: 0x16 / 255.0,
+                green: 0x3D / 255.0,
+                blue: 0x1B / 255.0,
+            };
+
         context.setSourceRGBA(
-            0x40 / 255.0,
-            0x14 / 255.0,
-            0x14 / 255.0,
+            trackColour.red,
+            trackColour.green,
+            trackColour.blue,
             0.70
         );
 
@@ -603,9 +635,9 @@ class MousehairMagnifierProof {
          */
         if (progress > 0.0) {
             context.setSourceRGBA(
-                0xE5 / 255.0,
-                0x39 / 255.0,
-                0x35 / 255.0,
+                progressColour.red,
+                progressColour.green,
+                progressColour.blue,
                 1.0
             );
 
@@ -622,6 +654,91 @@ class MousehairMagnifierProof {
 
             context.stroke();
         }
+
+        /*
+         * Countdown at 6 o'clock.
+         */
+        const remaining = Math.max(
+            0,
+            Math.ceil(
+                this._pomodoroRemainingSeconds
+            )
+        );
+
+        const minutes = Math.floor(
+            remaining / 60
+        );
+
+        const seconds = (
+            remaining % 60
+        );
+
+        const countdown =
+            String(minutes).padStart(2, '0')
+            + ':'
+            + String(seconds).padStart(2, '0');
+
+        context.selectFontFace(
+            'Sans',
+            0,
+            1
+        );
+        context.setFontSize(16.0);
+
+        const extents = context.textExtents(
+            countdown
+        );
+
+        const textX =
+            centreX
+            - extents.width / 2.0
+            - extents.xBearing;
+
+        const textY =
+            centreY
+            + radius
+            - 14.0;
+
+        const paddingX = 6.0;
+        const paddingY = 4.0;
+
+        context.setSourceRGBA(
+            0.0,
+            0.0,
+            0.0,
+            0.72
+        );
+
+        context.rectangle(
+            textX
+                + extents.xBearing
+                - paddingX,
+            textY
+                + extents.yBearing
+                - paddingY,
+            extents.width
+                + paddingX * 2.0,
+            extents.height
+                + paddingY * 2.0
+        );
+
+        context.fill();
+
+        context.setSourceRGBA(
+            1.0,
+            1.0,
+            1.0,
+            1.0
+        );
+
+        context.moveTo(
+            textX,
+            textY
+        );
+
+        context.showText(
+            countdown
+        );
 
         /*
          * Temporary tomato marker. We will improve its actual tomato shape
@@ -700,15 +817,28 @@ class MousehairMagnifierProof {
 
     _setPomodoroState(
         enabled,
+        phase,
         progress,
+        remainingSeconds,
         ringThickness,
         iconSize
     ) {
         this._pomodoroEnabled = Boolean(enabled);
+        this._pomodoroPhase = String(
+            phase || 'focus'
+        );
 
         const requestedProgress = Number(progress);
+        const requestedRemaining = Number(remainingSeconds);
         const requestedThickness = Number(ringThickness);
         const requestedIconSize = Number(iconSize);
+
+        if (Number.isFinite(requestedRemaining)) {
+            this._pomodoroRemainingSeconds = Math.max(
+                0.0,
+                requestedRemaining
+            );
+        }
 
         if (Number.isFinite(requestedProgress)) {
             this._pomodoroProgress = Math.max(
@@ -1392,12 +1522,16 @@ class MousehairMagnifierProof {
 
                 SetPomodoroState: (
                     enabled,
+                    phase,
                     progress,
+                    remainingSeconds,
                     ringThickness,
                     iconSize
                 ) => this._setPomodoroState(
                     enabled,
+                    phase,
                     progress,
+                    remainingSeconds,
                     ringThickness,
                     iconSize
                 ),

@@ -312,7 +312,14 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
                 self.pomodoro_enabled
                 and self.magnifier_enabled
             ),
+            phase=pomodoro_snapshot.phase,
             progress=pomodoro_snapshot.progress,
+            remaining_seconds=(
+                pomodoro_snapshot.remaining_seconds
+            ),
+            focus_colour=self.pomodoro_focus_colour,
+            break_colour=self.pomodoro_break_colour,
+            timer_text_size=self.pomodoro_timer_text_size,
             ring_thickness=self.pomodoro_ring_thickness,
             icon_size=self.pomodoro_icon_size,
         )
@@ -413,8 +420,15 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             'magnification': 2.0,
             'pomodoro_enabled': True,
             'pomodoro_focus_minutes': 25,
-            'pomodoro_break_minutes': 5,
-            'pomodoro_auto_start': False,
+            'pomodoro_short_break_minutes': 5,
+            'pomodoro_long_break_minutes': 15,
+            'pomodoro_focuses_before_long_break': 4,
+            'pomodoro_auto_start_break': False,
+            'pomodoro_auto_start_focus': False,
+            'pomodoro_pause_after_cycle': True,
+            'pomodoro_focus_colour': '#E53935',
+            'pomodoro_break_colour': '#43A047',
+            'pomodoro_timer_text_size': 16,
             'pomodoro_ring_thickness': 5.0,
             'pomodoro_icon_size': 14.0
         }
@@ -450,8 +464,15 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         self.magnification = defaults['magnification']
         self.pomodoro_enabled = defaults['pomodoro_enabled']
         self.pomodoro_focus_minutes = defaults['pomodoro_focus_minutes']
-        self.pomodoro_break_minutes = defaults['pomodoro_break_minutes']
-        self.pomodoro_auto_start = defaults['pomodoro_auto_start']
+        self.pomodoro_short_break_minutes = defaults['pomodoro_short_break_minutes']
+        self.pomodoro_long_break_minutes = defaults['pomodoro_long_break_minutes']
+        self.pomodoro_focuses_before_long_break = defaults['pomodoro_focuses_before_long_break']
+        self.pomodoro_auto_start_break = defaults['pomodoro_auto_start_break']
+        self.pomodoro_auto_start_focus = defaults['pomodoro_auto_start_focus']
+        self.pomodoro_pause_after_cycle = defaults['pomodoro_pause_after_cycle']
+        self.pomodoro_focus_colour = defaults['pomodoro_focus_colour']
+        self.pomodoro_break_colour = defaults['pomodoro_break_colour']
+        self.pomodoro_timer_text_size = defaults['pomodoro_timer_text_size']
         self.pomodoro_ring_thickness = defaults['pomodoro_ring_thickness']
         self.pomodoro_icon_size = defaults['pomodoro_icon_size']
         self.animation_phase = 0.0
@@ -547,9 +568,88 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             self.magnifier_enabled = bool(data.get('magnifier_enabled', self.magnifier_enabled))
             self.magnification = float(data.get('magnification', self.magnification))
             self.pomodoro_enabled = bool(data.get('pomodoro_enabled', self.pomodoro_enabled))
-            self.pomodoro_focus_minutes = int(data.get('pomodoro_focus_minutes', self.pomodoro_focus_minutes))
-            self.pomodoro_break_minutes = int(data.get('pomodoro_break_minutes', self.pomodoro_break_minutes))
-            self.pomodoro_auto_start = bool(data.get('pomodoro_auto_start', self.pomodoro_auto_start))
+            self.pomodoro_focus_minutes = int(
+                data.get(
+                    'pomodoro_focus_minutes',
+                    self.pomodoro_focus_minutes,
+                )
+            )
+
+            self.pomodoro_short_break_minutes = int(
+                data.get(
+                    'pomodoro_short_break_minutes',
+                    data.get(
+                        'pomodoro_break_minutes',
+                        self.pomodoro_short_break_minutes,
+                    ),
+                )
+            )
+
+            self.pomodoro_long_break_minutes = int(
+                data.get(
+                    'pomodoro_long_break_minutes',
+                    self.pomodoro_long_break_minutes,
+                )
+            )
+
+            self.pomodoro_focuses_before_long_break = max(
+                1,
+                int(
+                    data.get(
+                        'pomodoro_focuses_before_long_break',
+                        self.pomodoro_focuses_before_long_break,
+                    )
+                ),
+            )
+
+            legacy_auto_start = bool(
+                data.get(
+                    'pomodoro_auto_start',
+                    False,
+                )
+            )
+
+            self.pomodoro_auto_start_break = bool(
+                data.get(
+                    'pomodoro_auto_start_break',
+                    legacy_auto_start,
+                )
+            )
+
+            self.pomodoro_auto_start_focus = bool(
+                data.get(
+                    'pomodoro_auto_start_focus',
+                    legacy_auto_start,
+                )
+            )
+
+            self.pomodoro_pause_after_cycle = bool(
+                data.get(
+                    'pomodoro_pause_after_cycle',
+                    self.pomodoro_pause_after_cycle,
+                )
+            )
+
+            self.pomodoro_focus_colour = str(
+                data.get(
+                    'pomodoro_focus_colour',
+                    self.pomodoro_focus_colour,
+                )
+            )
+
+            self.pomodoro_break_colour = str(
+                data.get(
+                    'pomodoro_break_colour',
+                    self.pomodoro_break_colour,
+                )
+            )
+
+            self.pomodoro_timer_text_size = int(
+                data.get(
+                    'pomodoro_timer_text_size',
+                    self.pomodoro_timer_text_size,
+                )
+            )
             self.pomodoro_ring_thickness = float(data.get('pomodoro_ring_thickness', self.pomodoro_ring_thickness))
             self.pomodoro_icon_size = float(data.get('pomodoro_icon_size', self.pomodoro_icon_size))
             self.hotkey_key = str(data.get('hotkey_key', self.hotkey_key))
@@ -597,8 +697,15 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
                 'magnification': self.magnification,
                 'pomodoro_enabled': self.pomodoro_enabled,
                 'pomodoro_focus_minutes': self.pomodoro_focus_minutes,
-                'pomodoro_break_minutes': self.pomodoro_break_minutes,
-                'pomodoro_auto_start': self.pomodoro_auto_start,
+                'pomodoro_short_break_minutes': self.pomodoro_short_break_minutes,
+                'pomodoro_long_break_minutes': self.pomodoro_long_break_minutes,
+                'pomodoro_focuses_before_long_break': self.pomodoro_focuses_before_long_break,
+                'pomodoro_auto_start_break': self.pomodoro_auto_start_break,
+                'pomodoro_auto_start_focus': self.pomodoro_auto_start_focus,
+                'pomodoro_pause_after_cycle': self.pomodoro_pause_after_cycle,
+                'pomodoro_focus_colour': self.pomodoro_focus_colour,
+                'pomodoro_break_colour': self.pomodoro_break_colour,
+                'pomodoro_timer_text_size': self.pomodoro_timer_text_size,
                 'pomodoro_ring_thickness': self.pomodoro_ring_thickness,
                 'pomodoro_icon_size': self.pomodoro_icon_size,
                 'hotkey_key': self.hotkey_key,
@@ -1339,23 +1446,136 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             " min"
         )
 
-        pomodoro_break_spin = QtWidgets.QSpinBox()
-        pomodoro_break_spin.setRange(
+        pomodoro_short_break_spin = QtWidgets.QSpinBox()
+        pomodoro_short_break_spin.setRange(
             1,
             60,
         )
-        pomodoro_break_spin.setValue(
-            self.pomodoro_break_minutes
+        pomodoro_short_break_spin.setValue(
+            self.pomodoro_short_break_minutes
         )
-        pomodoro_break_spin.setSuffix(
+        pomodoro_short_break_spin.setSuffix(
             " min"
         )
 
-        pomodoro_auto_start_chk = QtWidgets.QCheckBox(
-            "Automatically start next phase"
+        pomodoro_long_break_spin = QtWidgets.QSpinBox()
+        pomodoro_long_break_spin.setRange(
+            1,
+            120,
         )
-        pomodoro_auto_start_chk.setChecked(
-            self.pomodoro_auto_start
+        pomodoro_long_break_spin.setValue(
+            self.pomodoro_long_break_minutes
+        )
+        pomodoro_long_break_spin.setSuffix(
+            " min"
+        )
+
+        pomodoro_cycle_spin = QtWidgets.QSpinBox()
+        pomodoro_cycle_spin.setRange(
+            1,
+            20,
+        )
+        pomodoro_cycle_spin.setValue(
+            self.pomodoro_focuses_before_long_break
+        )
+
+        pomodoro_auto_start_break_chk = QtWidgets.QCheckBox(
+            "Automatically start breaks"
+        )
+        pomodoro_auto_start_break_chk.setChecked(
+            self.pomodoro_auto_start_break
+        )
+
+        pomodoro_auto_start_focus_chk = QtWidgets.QCheckBox(
+            "Automatically start next focus"
+        )
+        pomodoro_auto_start_focus_chk.setChecked(
+            self.pomodoro_auto_start_focus
+        )
+
+        pomodoro_pause_after_cycle_chk = QtWidgets.QCheckBox(
+            "Pause after a complete Pomodoro cycle"
+        )
+        pomodoro_pause_after_cycle_chk.setChecked(
+            self.pomodoro_pause_after_cycle
+        )
+
+        pending_pomodoro_focus_colour = (
+            self.pomodoro_focus_colour
+        )
+
+        pending_pomodoro_break_colour = (
+            self.pomodoro_break_colour
+        )
+
+        pomodoro_focus_colour_btn = QtWidgets.QPushButton()
+        pomodoro_focus_colour_btn.setStyleSheet(
+            "background-color: "
+            f"{pending_pomodoro_focus_colour}"
+        )
+
+        def pick_pomodoro_focus_colour():
+            nonlocal pending_pomodoro_focus_colour
+
+            colour = QtWidgets.QColorDialog.getColor(
+                QtGui.QColor(
+                    pending_pomodoro_focus_colour
+                ),
+                dialog,
+                "Select Pomodoro Focus Colour",
+            )
+
+            if colour.isValid():
+                pending_pomodoro_focus_colour = colour.name()
+
+                pomodoro_focus_colour_btn.setStyleSheet(
+                    "background-color: "
+                    f"{pending_pomodoro_focus_colour}"
+                )
+
+        pomodoro_focus_colour_btn.clicked.connect(
+            pick_pomodoro_focus_colour
+        )
+
+        pomodoro_break_colour_btn = QtWidgets.QPushButton()
+        pomodoro_break_colour_btn.setStyleSheet(
+            "background-color: "
+            f"{pending_pomodoro_break_colour}"
+        )
+
+        def pick_pomodoro_break_colour():
+            nonlocal pending_pomodoro_break_colour
+
+            colour = QtWidgets.QColorDialog.getColor(
+                QtGui.QColor(
+                    pending_pomodoro_break_colour
+                ),
+                dialog,
+                "Select Pomodoro Break Colour",
+            )
+
+            if colour.isValid():
+                pending_pomodoro_break_colour = colour.name()
+
+                pomodoro_break_colour_btn.setStyleSheet(
+                    "background-color: "
+                    f"{pending_pomodoro_break_colour}"
+                )
+
+        pomodoro_break_colour_btn.clicked.connect(
+            pick_pomodoro_break_colour
+        )
+
+        pomodoro_timer_text_size_spin = QtWidgets.QSpinBox()
+        pomodoro_timer_text_size_spin.setRange(
+            8,
+            72,
+        )
+        pomodoro_timer_text_size_spin.setValue(
+            self.pomodoro_timer_text_size
+        )
+        pomodoro_timer_text_size_spin.setSuffix(
+            " px"
         )
 
         pomodoro_ring_thickness_spin = QtWidgets.QSpinBox()
@@ -1396,11 +1616,37 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             pomodoro_focus_spin,
         )
         pomodoro_layout.addRow(
-            "Break duration:",
-            pomodoro_break_spin,
+            "Short break duration:",
+            pomodoro_short_break_spin,
         )
         pomodoro_layout.addRow(
-            pomodoro_auto_start_chk
+            "Long break duration:",
+            pomodoro_long_break_spin,
+        )
+        pomodoro_layout.addRow(
+            "Focuses before long break:",
+            pomodoro_cycle_spin,
+        )
+        pomodoro_layout.addRow(
+            pomodoro_auto_start_break_chk
+        )
+        pomodoro_layout.addRow(
+            pomodoro_auto_start_focus_chk
+        )
+        pomodoro_layout.addRow(
+            pomodoro_pause_after_cycle_chk
+        )
+        pomodoro_layout.addRow(
+            "Focus ring colour:",
+            pomodoro_focus_colour_btn,
+        )
+        pomodoro_layout.addRow(
+            "Break ring colour:",
+            pomodoro_break_colour_btn,
+        )
+        pomodoro_layout.addRow(
+            "Countdown text size:",
+            pomodoro_timer_text_size_spin,
         )
         pomodoro_layout.addRow(
             "Ring thickness:",
@@ -1419,10 +1665,31 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             pomodoro_focus_spin.setEnabled(
                 enabled
             )
-            pomodoro_break_spin.setEnabled(
+            pomodoro_short_break_spin.setEnabled(
                 enabled
             )
-            pomodoro_auto_start_chk.setEnabled(
+            pomodoro_long_break_spin.setEnabled(
+                enabled
+            )
+            pomodoro_cycle_spin.setEnabled(
+                enabled
+            )
+            pomodoro_auto_start_break_chk.setEnabled(
+                enabled
+            )
+            pomodoro_auto_start_focus_chk.setEnabled(
+                enabled
+            )
+            pomodoro_pause_after_cycle_chk.setEnabled(
+                enabled
+            )
+            pomodoro_focus_colour_btn.setEnabled(
+                enabled
+            )
+            pomodoro_break_colour_btn.setEnabled(
+                enabled
+            )
+            pomodoro_timer_text_size_spin.setEnabled(
                 enabled
             )
             pomodoro_ring_thickness_spin.setEnabled(
@@ -1563,12 +1830,40 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
                 pomodoro_focus_spin.value()
             )
 
-            self.pomodoro_break_minutes = (
-                pomodoro_break_spin.value()
+            self.pomodoro_short_break_minutes = (
+                pomodoro_short_break_spin.value()
             )
 
-            self.pomodoro_auto_start = (
-                pomodoro_auto_start_chk.isChecked()
+            self.pomodoro_long_break_minutes = (
+                pomodoro_long_break_spin.value()
+            )
+
+            self.pomodoro_focuses_before_long_break = (
+                pomodoro_cycle_spin.value()
+            )
+
+            self.pomodoro_auto_start_break = (
+                pomodoro_auto_start_break_chk.isChecked()
+            )
+
+            self.pomodoro_auto_start_focus = (
+                pomodoro_auto_start_focus_chk.isChecked()
+            )
+
+            self.pomodoro_pause_after_cycle = (
+                pomodoro_pause_after_cycle_chk.isChecked()
+            )
+
+            self.pomodoro_focus_colour = (
+                pending_pomodoro_focus_colour
+            )
+
+            self.pomodoro_break_colour = (
+                pending_pomodoro_break_colour
+            )
+
+            self.pomodoro_timer_text_size = (
+                pomodoro_timer_text_size_spin.value()
             )
 
             self.pomodoro_ring_thickness = (

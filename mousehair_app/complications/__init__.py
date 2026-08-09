@@ -10,6 +10,8 @@ from .manager import ComplicationManager
 from .pomodoro import (
     PHASE_BREAK,
     PHASE_FOCUS,
+    PHASE_LONG_BREAK,
+    PHASE_SHORT_BREAK,
     STATE_IDLE,
     STATE_PAUSED,
     STATE_RUNNING,
@@ -33,6 +35,8 @@ __all__ = [
     "ComplicationManager",
     "PHASE_BREAK",
     "PHASE_FOCUS",
+    "PHASE_LONG_BREAK",
+    "PHASE_SHORT_BREAK",
     "STATE_IDLE",
     "STATE_PAUSED",
     "STATE_RUNNING",
