@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import sys
-import json
 import os
 import signal
 import subprocess
@@ -17,7 +16,10 @@ from mousehair_app.complications import (
     ComplicationManager,
 )
 
-CONFIG_PATH = os.path.expanduser('~/.config/mousehair/config.json')
+from mousehair_app.config import (
+    load_config,
+    save_config,
+)
 
 class GlobalHotkey(QtCore.QObject):
     """Register and receive Mousehair's global X11 keyboard shortcut."""
@@ -152,9 +154,9 @@ class GlobalHotkey(QtCore.QObject):
 
 class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
     # Unix signals cannot directly manipulate Qt widgets safely in a
-    # portable way. This Qt signal carries the request into the normal
-    # application event loop before visibility is changed.
+    # portable way. Qt signals carry requests into the ordinary event loop.
     toggle_requested = QtCore.pyqtSignal()
+    reload_settings_requested = QtCore.pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -218,8 +220,23 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         # The Cinnamon extension now registers Super+Shift+M natively and sends
         # SIGUSR1 to this process. The Python signal handler emits a Qt signal,
         # keeping the actual widget operation inside Qt's event loop.
-        self.toggle_requested.connect(self.toggle_visibility)
-        signal.signal(signal.SIGUSR1, self._handle_toggle_signal)
+        self.toggle_requested.connect(
+            self.toggle_visibility
+        )
+
+        self.reload_settings_requested.connect(
+            self.reload_settings_from_disk
+        )
+
+        signal.signal(
+            signal.SIGUSR1,
+            self._handle_toggle_signal,
+        )
+
+        signal.signal(
+            signal.SIGUSR2,
+            self._handle_reload_settings_signal,
+        )
 
         self.tray_menu = QtWidgets.QMenu()
         self.toggle_action = self.tray_menu.addAction("Disable Mousehair")
@@ -328,6 +345,29 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         """Receive the Cinnamon extension's SIGUSR1 toggle request."""
         self.toggle_requested.emit()
 
+    def _handle_reload_settings_signal(
+        self,
+        _signal_number,
+        _stack_frame,
+    ):
+        """Receive a request to reload the shared configuration file."""
+        self.reload_settings_requested.emit()
+
+    def reload_settings_from_disk(self):
+        """Reload persistent settings without restarting Mousehair."""
+        self.load_settings()
+
+        # Existing complication objects retain their runtime timer state.
+        # They read presentation/configuration values dynamically from this
+        # host, so replacing host attributes is sufficient.
+        self._sync_cinnamon_ring_style()
+        self._send_cinnamon_heartbeat()
+        self._sync_cinnamon_lens(
+            force=True
+        )
+
+        self.update()
+
     def toggle_visibility(self):
         self.visible = not self.visible
         if self.visible:
@@ -385,332 +425,158 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         )
 
     def load_settings(self):
-        defaults = {
-            'start_with_system': False,
-            'hotkey_key': 'M',
-            'hotkey_modifiers': ['SUPER', 'SHIFT'],
-            'alpha': 1.0,
-            'gap': 100,
-            'outer_thickness': 4,
-            'inner_thickness': 2,
-            'outer_color': '#FF0000',
-            'inner_color': '#FFFFFF',
-            'fade_enabled': False,
-            'fade_out_delay': 500,
-            'fade_in_delay': 0,
-            'fade_duration': 300,
-            # ``crosshair_effect`` is the canonical Effects Engine
-            # setting. The two older animation fields are retained so old
-            # configuration files can still be interpreted correctly.
-            'crosshair_effect': 'static',
-            'animate_enabled': False,
-            'animation_style': 'sliding',
-            'animate_speed': 180,
-            'animate_spacing': 32,
-            'animate_segment_length': 14,
-            'pulse_strength': 0.15,
-            'pulse_period': 1.5,
-            'arrow_first_offset': 20,
-            'arrow_spacing': 40,
-            'arrow_length': 14,
-            'arrow_width': 12,
-            'arrow_border_over_line': True,
-            'ring_enabled': False,
-            'magnifier_enabled': False,
-            'magnification': 2.0,
-            'pomodoro_enabled': True,
-            'pomodoro_focus_minutes': 25,
-            'pomodoro_short_break_minutes': 5,
-            'pomodoro_long_break_minutes': 15,
-            'pomodoro_focuses_before_long_break': 4,
-            'pomodoro_auto_start_break': False,
-            'pomodoro_auto_start_focus': False,
-            'pomodoro_pause_after_cycle': True,
-            'pomodoro_focus_colour': '#E53935',
-            'pomodoro_break_colour': '#43A047',
-            'pomodoro_timer_text_size': 16,
-            'pomodoro_ring_thickness': 5.0,
-            'pomodoro_icon_size': 14.0
-        }
-        self.start_with_system = defaults['start_with_system']
-        self.alpha = defaults['alpha']
-        self.gap = defaults['gap']
-        self.outer_thickness = defaults['outer_thickness']
-        self.inner_thickness = defaults['inner_thickness']
-        self.outer_color = defaults['outer_color']
-        self.inner_color = defaults['inner_color']
-        self.fade_enabled = defaults['fade_enabled']
-        self.fade_out_delay = defaults['fade_out_delay']
-        self.fade_in_delay = defaults['fade_in_delay']
-        self.fade_duration = defaults['fade_duration']
-        self.crosshair_effect = defaults['crosshair_effect']
+        """Load persistent settings through the shared config module."""
+        valid_effect_names = (
+            self._crosshair_renderers().keys()
+        )
 
-        # Legacy aliases. These remain available while older code and config
-        # files are phased out.
-        self.animate_enabled = defaults['animate_enabled']
-        self.animation_style = defaults['animation_style']
-        self.animate_speed = defaults['animate_speed']
-        self.animate_spacing = defaults['animate_spacing']
-        self.animate_segment_length = defaults['animate_segment_length']
-        self.pulse_strength = defaults['pulse_strength']
-        self.pulse_period = defaults['pulse_period']
-        self.arrow_first_offset = defaults['arrow_first_offset']
-        self.arrow_spacing = defaults['arrow_spacing']
-        self.arrow_length = defaults['arrow_length']
-        self.arrow_border_over_line = defaults['arrow_border_over_line']
-        self.arrow_width = defaults['arrow_width']
-        self.ring_enabled = defaults['ring_enabled']
-        self.magnifier_enabled = defaults['magnifier_enabled']
-        self.magnification = defaults['magnification']
-        self.pomodoro_enabled = defaults['pomodoro_enabled']
-        self.pomodoro_focus_minutes = defaults['pomodoro_focus_minutes']
-        self.pomodoro_short_break_minutes = defaults['pomodoro_short_break_minutes']
-        self.pomodoro_long_break_minutes = defaults['pomodoro_long_break_minutes']
-        self.pomodoro_focuses_before_long_break = defaults['pomodoro_focuses_before_long_break']
-        self.pomodoro_auto_start_break = defaults['pomodoro_auto_start_break']
-        self.pomodoro_auto_start_focus = defaults['pomodoro_auto_start_focus']
-        self.pomodoro_pause_after_cycle = defaults['pomodoro_pause_after_cycle']
-        self.pomodoro_focus_colour = defaults['pomodoro_focus_colour']
-        self.pomodoro_break_colour = defaults['pomodoro_break_colour']
-        self.pomodoro_timer_text_size = defaults['pomodoro_timer_text_size']
-        self.pomodoro_ring_thickness = defaults['pomodoro_ring_thickness']
-        self.pomodoro_icon_size = defaults['pomodoro_icon_size']
+        config, valid = load_config(
+            valid_effect_names=valid_effect_names,
+        )
+
+        # ------------------------------------------------------------
+        # Copy persistent values onto the runtime host.
+        #
+        # Existing effects and complications intentionally continue to read
+        # attributes from MousehairOverlay. This keeps the config extraction
+        # behavioural rather than architectural: moving persistence out does
+        # not require rewriting the renderer at the same time.
+        # ------------------------------------------------------------
+
+        for key, value in config.items():
+            setattr(
+                self,
+                key,
+                value,
+            )
+
+        # Legacy aliases remain derived from the canonical effect selection.
+        self.animation_style = (
+            self.crosshair_effect
+        )
+
+        self.animate_enabled = (
+            self.crosshair_effect
+            != "static"
+        )
+
+        # Runtime-only animation state is not configuration.
         self.animation_phase = 0.0
-        self.animation_clock = QtCore.QElapsedTimer()
+
+        self.animation_clock = (
+            QtCore.QElapsedTimer()
+        )
         self.animation_clock.start()
-        self.current_alpha = self.alpha
-        self.hotkey_key = defaults['hotkey_key']
-        self.hotkey_modifiers = defaults['hotkey_modifiers']
 
-        valid = True
-        data = {}
-        if os.path.exists(CONFIG_PATH):
-            try:
-                with open(CONFIG_PATH, 'r') as f:
-                    data = json.load(f)
-            except:
-                valid = False
-        else:
-            valid = False
-
-        try:
-            self.start_with_system = bool(data.get('start_with_system', self.start_with_system))
-            self.alpha = float(data.get('alpha', self.alpha))
-            self.gap = int(data.get('gap', self.gap))
-            self.outer_thickness = int(data.get('outer_thickness', self.outer_thickness))
-            self.inner_thickness = int(data.get('inner_thickness', self.inner_thickness))
-            self.outer_color = str(data.get('outer_color', self.outer_color))
-            self.inner_color = str(data.get('inner_color', self.inner_color))
-            self.fade_enabled = bool(data.get('fade_enabled', self.fade_enabled))
-            self.fade_out_delay = int(data.get('fade_out_delay', self.fade_out_delay))
-            self.fade_in_delay = int(data.get('fade_in_delay', self.fade_in_delay))
-            self.fade_duration = int(data.get('fade_duration', self.fade_duration))
-            legacy_animate_enabled = bool(
-                data.get(
-                    'animate_enabled',
-                    self.animate_enabled,
-                )
-            )
-
-            legacy_animation_style = str(
-                data.get(
-                    'animation_style',
-                    self.animation_style,
-                )
-            )
-
-            if 'crosshair_effect' in data:
-                # New-format configuration.
-                requested_effect = str(
-                    data.get(
-                        'crosshair_effect',
-                        self.crosshair_effect,
-                    )
-                )
-            else:
-                # Migration from the pre-Effects-Engine configuration model.
-                # animate_enabled=False historically meant Static regardless
-                # of the stored animation_style value.
-                requested_effect = (
-                    legacy_animation_style
-                    if legacy_animate_enabled
-                    else "static"
-                )
-
-            requested_effect = (
-                requested_effect
-                .strip()
-                .lower()
-            )
-
-            if requested_effect not in self._crosshair_renderers():
-                requested_effect = "static"
-
-            self.crosshair_effect = requested_effect
-
-            # Keep the old attributes as derived aliases so older code remains
-            # harmless while the migration is completed incrementally.
-            self.animation_style = self.crosshair_effect
-            self.animate_enabled = (
-                self.crosshair_effect != "static"
-            )
-            self.animate_speed = int(data.get('animate_speed', self.animate_speed))
-            self.animate_spacing = int(data.get('animate_spacing', self.animate_spacing))
-            self.animate_segment_length = int(data.get('animate_segment_length', self.animate_segment_length))
-            self.pulse_strength = float(data.get('pulse_strength', self.pulse_strength))
-            self.pulse_period = float(data.get('pulse_period', self.pulse_period))
-            self.arrow_first_offset = int(data.get('arrow_first_offset', self.arrow_first_offset))
-            self.arrow_spacing = int(data.get('arrow_spacing', self.arrow_spacing))
-            self.arrow_length = int(data.get('arrow_length', self.arrow_length))
-            self.arrow_border_over_line = bool(data.get('arrow_border_over_line', self.arrow_border_over_line))
-            self.arrow_width = int(data.get('arrow_width', self.arrow_width))
-            self.ring_enabled = bool(data.get('ring_enabled', self.ring_enabled))
-            self.magnifier_enabled = bool(data.get('magnifier_enabled', self.magnifier_enabled))
-            self.magnification = float(data.get('magnification', self.magnification))
-            self.pomodoro_enabled = bool(data.get('pomodoro_enabled', self.pomodoro_enabled))
-            self.pomodoro_focus_minutes = int(
-                data.get(
-                    'pomodoro_focus_minutes',
-                    self.pomodoro_focus_minutes,
-                )
-            )
-
-            self.pomodoro_short_break_minutes = int(
-                data.get(
-                    'pomodoro_short_break_minutes',
-                    data.get(
-                        'pomodoro_break_minutes',
-                        self.pomodoro_short_break_minutes,
-                    ),
-                )
-            )
-
-            self.pomodoro_long_break_minutes = int(
-                data.get(
-                    'pomodoro_long_break_minutes',
-                    self.pomodoro_long_break_minutes,
-                )
-            )
-
-            self.pomodoro_focuses_before_long_break = max(
-                1,
-                int(
-                    data.get(
-                        'pomodoro_focuses_before_long_break',
-                        self.pomodoro_focuses_before_long_break,
-                    )
-                ),
-            )
-
-            legacy_auto_start = bool(
-                data.get(
-                    'pomodoro_auto_start',
-                    False,
-                )
-            )
-
-            self.pomodoro_auto_start_break = bool(
-                data.get(
-                    'pomodoro_auto_start_break',
-                    legacy_auto_start,
-                )
-            )
-
-            self.pomodoro_auto_start_focus = bool(
-                data.get(
-                    'pomodoro_auto_start_focus',
-                    legacy_auto_start,
-                )
-            )
-
-            self.pomodoro_pause_after_cycle = bool(
-                data.get(
-                    'pomodoro_pause_after_cycle',
-                    self.pomodoro_pause_after_cycle,
-                )
-            )
-
-            self.pomodoro_focus_colour = str(
-                data.get(
-                    'pomodoro_focus_colour',
-                    self.pomodoro_focus_colour,
-                )
-            )
-
-            self.pomodoro_break_colour = str(
-                data.get(
-                    'pomodoro_break_colour',
-                    self.pomodoro_break_colour,
-                )
-            )
-
-            self.pomodoro_timer_text_size = int(
-                data.get(
-                    'pomodoro_timer_text_size',
-                    self.pomodoro_timer_text_size,
-                )
-            )
-            self.pomodoro_ring_thickness = float(data.get('pomodoro_ring_thickness', self.pomodoro_ring_thickness))
-            self.pomodoro_icon_size = float(data.get('pomodoro_icon_size', self.pomodoro_icon_size))
-            self.hotkey_key = str(data.get('hotkey_key', self.hotkey_key))
-            self.hotkey_modifiers = list(data.get('hotkey_modifiers', self.hotkey_modifiers))
-        except:
-            valid = False
+        self.current_alpha = (
+            self.alpha
+        )
 
         if not valid:
             self.save_settings()
 
-    def save_settings(self):
-        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump({
-                'start_with_system': self.start_with_system,
-                'alpha': self.alpha,
-                'gap': self.gap,
-                'outer_thickness': self.outer_thickness,
-                'inner_thickness': self.inner_thickness,
-                'outer_color': self.outer_color,
-                'inner_color': self.inner_color,
-                'fade_enabled': self.fade_enabled,
-                'fade_out_delay': self.fade_out_delay,
-                'fade_in_delay': self.fade_in_delay,
-                'fade_duration': self.fade_duration,
-                'crosshair_effect': self.crosshair_effect,
+    def _settings_dict(self):
+        """Return the persistent runtime settings as a plain dictionary."""
+        return {
+            "start_with_system": self.start_with_system,
 
-                # Compatibility fields for older Mousehair builds.
-                'animate_enabled': (
-                    self.crosshair_effect != 'static'
-                ),
-                'animation_style': self.crosshair_effect,
-                'animate_speed': self.animate_speed,
-                'animate_spacing': self.animate_spacing,
-                'animate_segment_length': self.animate_segment_length,
-                'pulse_strength': self.pulse_strength,
-                'pulse_period': self.pulse_period,
-                'arrow_first_offset': self.arrow_first_offset,
-                'arrow_spacing': self.arrow_spacing,
-                'arrow_length': self.arrow_length,
-                'arrow_border_over_line': self.arrow_border_over_line,
-                'arrow_width': self.arrow_width,
-                'ring_enabled': self.ring_enabled,
-                'magnifier_enabled': self.magnifier_enabled,
-                'magnification': self.magnification,
-                'pomodoro_enabled': self.pomodoro_enabled,
-                'pomodoro_focus_minutes': self.pomodoro_focus_minutes,
-                'pomodoro_short_break_minutes': self.pomodoro_short_break_minutes,
-                'pomodoro_long_break_minutes': self.pomodoro_long_break_minutes,
-                'pomodoro_focuses_before_long_break': self.pomodoro_focuses_before_long_break,
-                'pomodoro_auto_start_break': self.pomodoro_auto_start_break,
-                'pomodoro_auto_start_focus': self.pomodoro_auto_start_focus,
-                'pomodoro_pause_after_cycle': self.pomodoro_pause_after_cycle,
-                'pomodoro_focus_colour': self.pomodoro_focus_colour,
-                'pomodoro_break_colour': self.pomodoro_break_colour,
-                'pomodoro_timer_text_size': self.pomodoro_timer_text_size,
-                'pomodoro_ring_thickness': self.pomodoro_ring_thickness,
-                'pomodoro_icon_size': self.pomodoro_icon_size,
-                'hotkey_key': self.hotkey_key,
-                'hotkey_modifiers': self.hotkey_modifiers
-            }, f)
+            "hotkey_key": self.hotkey_key,
+            "hotkey_modifiers": list(
+                self.hotkey_modifiers
+            ),
+
+            "alpha": self.alpha,
+            "gap": self.gap,
+
+            "outer_thickness": self.outer_thickness,
+            "inner_thickness": self.inner_thickness,
+
+            "outer_color": self.outer_color,
+            "inner_color": self.inner_color,
+
+            "fade_enabled": self.fade_enabled,
+            "fade_out_delay": self.fade_out_delay,
+            "fade_in_delay": self.fade_in_delay,
+            "fade_duration": self.fade_duration,
+
+            "crosshair_effect": self.crosshair_effect,
+
+            "animate_speed": self.animate_speed,
+            "animate_spacing": self.animate_spacing,
+            "animate_segment_length": self.animate_segment_length,
+
+            "pulse_strength": self.pulse_strength,
+            "pulse_period": self.pulse_period,
+
+            "arrow_first_offset": self.arrow_first_offset,
+            "arrow_spacing": self.arrow_spacing,
+            "arrow_length": self.arrow_length,
+            "arrow_width": self.arrow_width,
+            "arrow_border_over_line": (
+                self.arrow_border_over_line
+            ),
+
+            "ring_enabled": self.ring_enabled,
+
+            "magnifier_enabled": self.magnifier_enabled,
+            "magnification": self.magnification,
+
+            "pomodoro_enabled": self.pomodoro_enabled,
+
+            "pomodoro_focus_minutes": (
+                self.pomodoro_focus_minutes
+            ),
+
+            "pomodoro_short_break_minutes": (
+                self.pomodoro_short_break_minutes
+            ),
+
+            "pomodoro_long_break_minutes": (
+                self.pomodoro_long_break_minutes
+            ),
+
+            "pomodoro_focuses_before_long_break": (
+                self.pomodoro_focuses_before_long_break
+            ),
+
+            "pomodoro_auto_start_break": (
+                self.pomodoro_auto_start_break
+            ),
+
+            "pomodoro_auto_start_focus": (
+                self.pomodoro_auto_start_focus
+            ),
+
+            "pomodoro_pause_after_cycle": (
+                self.pomodoro_pause_after_cycle
+            ),
+
+            "pomodoro_focus_colour": (
+                self.pomodoro_focus_colour
+            ),
+
+            "pomodoro_break_colour": (
+                self.pomodoro_break_colour
+            ),
+
+            "pomodoro_timer_text_size": (
+                self.pomodoro_timer_text_size
+            ),
+
+            "pomodoro_ring_thickness": (
+                self.pomodoro_ring_thickness
+            ),
+
+            "pomodoro_icon_size": (
+                self.pomodoro_icon_size
+            ),
+        }
+
+    def save_settings(self):
+        """Persist current runtime settings through the shared config module."""
+        save_config(
+            self._settings_dict()
+        )
 
     def _gsettings_get(self, schema, key):
         """Read one Cinnamon setting through the gsettings command."""

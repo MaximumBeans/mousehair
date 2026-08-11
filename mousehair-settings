@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+
+from mousehair_app.settings_gtk import main
+
+
+if __name__ == "__main__":
+    main()
