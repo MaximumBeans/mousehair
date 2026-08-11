@@ -16,6 +16,10 @@ from mousehair_app.complications import (
     ComplicationManager,
 )
 
+from mousehair_app.pomodoro_sound import (
+    PomodoroSoundController,
+)
+
 from mousehair_app.config import (
     load_config,
     save_config,
@@ -167,6 +171,16 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
         # frame.
         self.complications = ComplicationManager(
             self
+        )
+
+        self.pomodoro_sound = (
+            PomodoroSoundController(
+                self
+            )
+        )
+
+        self.complications.pomodoro.add_event_listener(
+            self.pomodoro_sound.handle_pomodoro_event
         )
 
         self.setWindowFlags(
@@ -522,6 +536,7 @@ class MousehairOverlay(RenderPipelineMixin, QtWidgets.QWidget):
             "magnification": self.magnification,
 
             "pomodoro_enabled": self.pomodoro_enabled,
+            "pomodoro_sound_enabled": self.pomodoro_sound_enabled,
 
             "pomodoro_focus_minutes": (
                 self.pomodoro_focus_minutes

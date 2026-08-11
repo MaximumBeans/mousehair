@@ -135,6 +135,63 @@ class PomodoroComplication(Complication):
         self._started_at = None
         self._paused_remaining = None
 
+        # Event listeners are deliberately plain Python callbacks. The timer
+        # remains independent of Qt, GTK and the eventual sound/notification
+        # implementations.
+        self._event_listeners = []
+
+    def add_event_listener(
+        self,
+        callback,
+    ):
+        """Register a callback receiving ``(event_name, timer)``."""
+        if callback not in self._event_listeners:
+            self._event_listeners.append(
+                callback
+            )
+
+    def remove_event_listener(
+        self,
+        callback,
+    ):
+        """Remove a previously registered event callback."""
+        try:
+            self._event_listeners.remove(
+                callback
+            )
+        except ValueError:
+            pass
+
+    def _emit_event(
+        self,
+        event_name,
+    ):
+        """Publish one semantic Pomodoro event."""
+        for callback in tuple(
+            self._event_listeners
+        ):
+            callback(
+                str(event_name),
+                self,
+            )
+
+    def _phase_event_name(
+        self,
+        suffix,
+        *,
+        phase=None,
+    ):
+        """Return names such as ``focus_started`` or ``long_break_finished``."""
+        phase = (
+            self.phase
+            if phase is None
+            else phase
+        )
+
+        return (
+            f"{phase}_{suffix}"
+        )
+
     def _setting(
         self,
         key,
@@ -294,8 +351,23 @@ class PomodoroComplication(Complication):
         else:
             self._started_at = now
 
+        was_paused = (
+            self.state == STATE_PAUSED
+        )
+
         self._paused_remaining = None
         self.state = STATE_RUNNING
+
+        if was_paused:
+            self._emit_event(
+                "resumed"
+            )
+        else:
+            self._emit_event(
+                self._phase_event_name(
+                    "started"
+                )
+            )
 
     def pause(self):
         """Pause without losing elapsed time."""
@@ -313,6 +385,10 @@ class PomodoroComplication(Complication):
         self._started_at = None
         self.state = STATE_PAUSED
 
+        self._emit_event(
+            "paused"
+        )
+
     def toggle(self):
         if self.state == STATE_RUNNING:
             self.pause()
@@ -328,6 +404,10 @@ class PomodoroComplication(Complication):
 
         self._started_at = None
         self._paused_remaining = None
+
+        self._emit_event(
+            "reset"
+        )
 
     def reset_current_phase(self):
         """Restart the current phase without resetting completed focuses."""
@@ -395,6 +475,12 @@ class PomodoroComplication(Complication):
             self.state = STATE_RUNNING
             self._started_at = self._clock()
 
+            self._emit_event(
+                self._phase_event_name(
+                    "started"
+                )
+            )
+
         else:
             self.state = STATE_IDLE
 
@@ -430,7 +516,17 @@ class PomodoroComplication(Complication):
 
     def skip(self):
         """Immediately advance to the logically next phase."""
+        skipped_phase = self.phase
+
         self._advance_phase()
+
+        self._emit_event(
+            "skipped"
+        )
+
+        self._emit_event(
+            f"{skipped_phase}_skipped"
+        )
 
     def update(
         self,
@@ -447,6 +543,20 @@ class PomodoroComplication(Complication):
             now=now,
         ) > 0.0:
             return False
+
+        completed_phase = self.phase
+
+        self._emit_event(
+            self._phase_event_name(
+                "finished",
+                phase=completed_phase,
+            )
+        )
+
+        if completed_phase == PHASE_LONG_BREAK:
+            self._emit_event(
+                "cycle_finished"
+            )
 
         self._advance_phase()
 

@@ -72,6 +72,7 @@ DEFAULT_CONFIG = {
     "magnification": 2.0,
 
     "pomodoro_enabled": True,
+    "pomodoro_sound_enabled": True,
 
     "pomodoro_focus_minutes": 25,
     "pomodoro_short_break_minutes": 5,
@@ -396,6 +397,13 @@ def load_config(
             raw.get(
                 "pomodoro_enabled",
                 config["pomodoro_enabled"],
+            )
+        )
+
+        config["pomodoro_sound_enabled"] = bool(
+            raw.get(
+                "pomodoro_sound_enabled",
+                config["pomodoro_sound_enabled"],
             )
         )
 
